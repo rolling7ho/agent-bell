@@ -8,13 +8,17 @@ final class NtfyPublisherTests: XCTestCase {
             SecureNtfyTopic.topic(fromEntropy: entropy)
         )
 
-        XCTAssertEqual(topic.count, SecureNtfyTopic.prefix.count + 64)
+        XCTAssertEqual(
+            topic.count,
+            SecureNtfyTopic.prefix.count
+                + SecureNtfyTopic.encodedEntropyCharacterCount
+        )
+        XCTAssertLessThanOrEqual(topic.utf8.count, 64)
         XCTAssertTrue(SecureNtfyTopic.isGeneratedTopic(topic))
         XCTAssertTrue(NtfyRequestBuilder.isValidTopic(topic))
         XCTAssertEqual(
             topic,
-            "agentbell-000102030405060708090a0b0c0d0e0f"
-                + "101112131415161718191a1b1c1d1e1f"
+            "agentbell-AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
         )
         XCTAssertNil(
             SecureNtfyTopic.topic(
@@ -34,8 +38,7 @@ final class NtfyPublisherTests: XCTestCase {
 
     func testOnlyFullGeneratedTopicsCanBeMigrated() {
         let generated =
-            "agentbell-0123456789abcdef0123456789abcdef"
-            + "0123456789abcdef0123456789abcdef"
+            "agentbell-AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
 
         XCTAssertEqual(
             SecureNtfyTopic.migratableTopic(generated),
@@ -49,6 +52,12 @@ final class NtfyPublisherTests: XCTestCase {
         XCTAssertNil(
             SecureNtfyTopic.migratableTopic(
                 generated.uppercased()
+            )
+        )
+        XCTAssertNil(
+            SecureNtfyTopic.migratableTopic(
+                "agentbell-0123456789abcdef0123456789abcdef"
+                    + "0123456789abcdef0123456789abcdef"
             )
         )
         XCTAssertNil(SecureNtfyTopic.migratableTopic("shared-topic-name"))
@@ -178,6 +187,11 @@ final class NtfyPublisherTests: XCTestCase {
     func testRejectsShortOrUnsafeTopics() {
         XCTAssertFalse(NtfyRequestBuilder.isValidTopic("short"))
         XCTAssertFalse(NtfyRequestBuilder.isValidTopic("agentbell/topic with spaces"))
+        XCTAssertFalse(
+            NtfyRequestBuilder.isValidTopic(
+                String(repeating: "a", count: 65)
+            )
+        )
         XCTAssertTrue(
             NtfyRequestBuilder.isValidTopic("agentbell-0123456789abcdef")
         )

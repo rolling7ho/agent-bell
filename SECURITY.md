@@ -11,8 +11,8 @@ AgentBell therefore uses layered controls:
 - signed bundle integrity checks before the app or hook processes data;
 - hardened runtime for every packaged build, including ad-hoc builds;
 - Developer ID signing and notarization when Apple credentials are available;
-- an explicit, visibly untrusted free-distribution mode with detached
-  signatures and SHA-256 manifests;
+- an explicit free-distribution mode with detached signatures, SHA-256
+  manifests, and clear non-notarization disclosure;
 - no automatic updater or third-party runtime packages;
 - a minimal, allowlisted and minified VS Code companion package;
 - device-only Keychain storage for ntfy topics and tokens;
@@ -55,7 +55,7 @@ files.
 
 Apple does not issue Developer ID Application certificates or accept
 notarization submissions through a free Apple developer account. The fallback
-mode is therefore deliberately labeled untrusted by macOS.
+mode is therefore clearly identified as not Apple-notarized.
 
 Create a long-lived detached-signing key outside the source tree:
 
@@ -75,9 +75,9 @@ AGENTBELL_RELEASE_PRIVATE_KEY="$HOME/.agentbell-signing/release-private.pem" \
 /bin/zsh Scripts/build-dmg.sh release
 ```
 
-The output filename contains `UNTRUSTED-adhoc`. The output directory also
-contains a SHA-256 manifest, a detached signature, the public key, and the
-public-key fingerprint.
+The output directory contains the DMG, a SHA-256 manifest, a detached
+signature, the public key, and the public-key fingerprint. The DMG includes a
+plain-language notice that this free release is not Apple-notarized.
 
 Publish the public-key fingerprint through at least one independent trusted
 channel. A public key downloaded from the same compromised location as the
@@ -87,9 +87,9 @@ Recipients verify before opening:
 
 ```sh
 /bin/zsh Scripts/verify-download.sh \
-  AgentBell-1.3.0-build28-arm64-UNTRUSTED-adhoc.dmg \
-  AgentBell-1.3.0-build28-arm64-UNTRUSTED-adhoc.dmg.sha256 \
-  AgentBell-1.3.0-build28-arm64-UNTRUSTED-adhoc.dmg.sha256.sig \
+  AgentBell-1.3.0-build29-arm64.dmg \
+  AgentBell-1.3.0-build29-arm64.dmg.sha256 \
+  AgentBell-1.3.0-build29-arm64.dmg.sha256.sig \
   AgentBell-release-public.pem
 ```
 
@@ -99,9 +99,10 @@ and pinned the legitimate public key.
 
 ## ntfy topics
 
-Every accepted AgentBell-generated topic is `agentbell-` followed by 64
-lowercase hexadecimal characters derived from 256 bits supplied by
-`SecRandomCopyBytes`. Stored or legacy topics that do not have this exact
+Every accepted AgentBell-generated topic is `agentbell-` followed by 43
+unpadded base64url characters derived from 256 bits supplied by
+`SecRandomCopyBytes`. The resulting 53-character topic stays within ntfy's
+64-character limit. Stored or legacy topics that do not have this exact
 format are deleted and replaced.
 
 Collision is computationally negligible but not mathematically impossible,

@@ -1,5 +1,6 @@
 import AgentBellCore
 import AppKit
+import QuartzCore
 
 @MainActor
 final class DashboardViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
@@ -16,25 +17,23 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
     private var maximumPreviewCharacters = 50
     private let tableView = NSTableView()
     private let detailLabel = NSTextField(wrappingLabelWithString: "")
-    private let attentionBadge = AttentionBadge()
-    private let clearButton = IconButton(
-        symbol: "trash",
-        accessibilityDescription: "Clear all activity",
-        tint: .destructive
-    )
-    private let settingsButton = IconButton(
+    private let clearButton = RoundedRectButton(title: "Clear")
+    private let settingsButton = RoundedRectButton(
         symbol: "gearshape",
         accessibilityDescription: "Settings"
     )
-    private let quitButton = PillButton(title: "Quit", style: .destructive)
+    private let quitButton = RoundedRectButton(
+        title: "Quit",
+        emphasis: .destructive
+    )
     private let versionLabel = NSTextField(labelWithString: "")
-    private let emptyStateView = EmptyStateView()
+    private let emptyLabel = NSTextField(labelWithString: "No agent activity yet")
     private var detailClearTask: Task<Void, Never>?
     private var clearAllTask: Task<Void, Never>?
     private var isBusy = false
 
     override func loadView() {
-        view = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: 500))
+        view = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: 480))
         buildInterface()
     }
 
@@ -62,11 +61,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         self.includesPrivateDetails = includesPrivateDetails
         self.maximumPreviewCharacters = maximumPreviewCharacters
         tableView.reloadData()
-        emptyStateView.isHidden = !self.sessions.isEmpty
-        clearButton.isEnabled = !isBusy && !self.sessions.isEmpty
-        attentionBadge.update(
-            count: self.sessions.filter { $0.state == .attention }.count
-        )
+        emptyLabel.isHidden = !self.sessions.isEmpty
 
         if !preserveMessage && !isBusy {
             hideDetailMessage()
@@ -81,7 +76,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         detailClearTask?.cancel()
         detailClearTask = nil
         isBusy = busy
-        clearButton.isEnabled = !busy && !sessions.isEmpty
+        clearButton.isEnabled = !busy
         settingsButton.isEnabled = !busy
         detailLabel.stringValue = message
         detailLabel.isHidden = message.isEmpty
@@ -101,7 +96,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
     }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        80
+        78
     }
 
     func tableView(
@@ -117,17 +112,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
             includesPrivateDetails: includesPrivateDetails,
             maximumPreviewCharacters: maximumPreviewCharacters
         )
-        cell.onClear = { [weak self] in
-            self?.clearSession(session, animatedIn: cell)
-        }
         return cell
-    }
-
-    func tableView(
-        _ tableView: NSTableView,
-        rowViewForRow row: Int
-    ) -> NSTableRowView? {
-        PlainRowView()
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
@@ -167,7 +152,24 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
             style: .destructive,
             title: "Clear"
         ) { [weak self] _, _ in
-            self?.clearSession(session)
+            guard let self,
+                  let currentRow = sessions.firstIndex(
+                    where: { $0.sessionKey == session.sessionKey }
+                  )
+            else {
+                return
+            }
+            guard let cell = tableView.view(
+                atColumn: 0,
+                row: currentRow,
+                makeIfNecessary: false
+            ) as? SessionCellView else {
+                onClearSession?(session)
+                return
+            }
+            cell.animateFallingBackward { [weak self] in
+                self?.onClearSession?(session)
+            }
         }
         action.image = NSImage(
             systemSymbolName: "xmark",
@@ -175,33 +177,6 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         )
         action.backgroundColor = NSColor.systemRed
         return [action]
-    }
-
-    private func clearSession(
-        _ session: SessionSummary,
-        animatedIn providedCell: SessionCellView? = nil
-    ) {
-        let cell = providedCell ?? currentCell(for: session)
-        guard let cell else {
-            onClearSession?(session)
-            return
-        }
-        cell.animateFallingBackward { [weak self] in
-            self?.onClearSession?(session)
-        }
-    }
-
-    private func currentCell(for session: SessionSummary) -> SessionCellView? {
-        guard let row = sessions.firstIndex(
-            where: { $0.sessionKey == session.sessionKey }
-        ) else {
-            return nil
-        }
-        return tableView.view(
-            atColumn: 0,
-            row: row,
-            makeIfNecessary: false
-        ) as? SessionCellView
     }
 
     private func moveSessionDown(_ session: SessionSummary) {
@@ -229,25 +204,23 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
 
     private func buildInterface() {
         let title = NSTextField(labelWithString: "AgentBell")
-        title.font = .systemFont(ofSize: 19, weight: .semibold)
+        title.font = .systemFont(ofSize: 20, weight: .semibold)
 
         let titleSymbol = NSImageView()
-        titleSymbol.image = Theme.symbolImage(
-            "bell.fill",
-            pointSize: 16,
-            weight: .semibold,
+        titleSymbol.image = NSImage(
+            systemSymbolName: "bell.fill",
             accessibilityDescription: "AgentBell"
+        )?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
         )
         titleSymbol.contentTintColor = .controlAccentColor
 
         detailLabel.font = .systemFont(ofSize: 11)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.maximumNumberOfLines = 3
-        detailLabel.isHidden = true
 
         clearButton.target = self
         clearButton.action = #selector(clearPressed)
-        clearButton.isEnabled = false
 
         settingsButton.target = self
         settingsButton.action = #selector(settingsPressed)
@@ -256,12 +229,12 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         quitButton.action = #selector(quitPressed)
 
         let headerButtons = NSStackView(
-            views: [clearButton, settingsButton]
+            views: [settingsButton, clearButton]
         )
         headerButtons.orientation = .horizontal
-        headerButtons.spacing = 6
+        headerButtons.spacing = 8
 
-        let heading = NSStackView(views: [titleSymbol, title, attentionBadge])
+        let heading = NSStackView(views: [titleSymbol, title])
         heading.orientation = .horizontal
         heading.alignment = .centerY
         heading.spacing = 7
@@ -275,15 +248,12 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         header.alignment = .leading
         header.spacing = 3
 
-        let headerSeparator = SeparatorView()
-
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("session"))
         column.resizingMask = .autoresizingMask
         tableView.addTableColumn(column)
         tableView.headerView = nil
-        tableView.rowSizeStyle = .custom
+        tableView.rowSizeStyle = .medium
         tableView.selectionHighlightStyle = .regular
-        tableView.style = .plain
         tableView.intercellSpacing = NSSize(width: 0, height: 2)
         tableView.backgroundColor = .clear
         tableView.delegate = self
@@ -292,16 +262,11 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         let scrollView = NSScrollView()
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
-        scrollView.automaticallyAdjustsContentInsets = false
-        scrollView.contentInsets = NSEdgeInsets(
-            top: 6,
-            left: 0,
-            bottom: 6,
-            right: 0
-        )
+
+        emptyLabel.textColor = .tertiaryLabelColor
+        emptyLabel.alignment = .center
 
         let version = Bundle.main.object(
             forInfoDictionaryKey: "CFBundleShortVersionString"
@@ -313,19 +278,11 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         versionLabel.font = .systemFont(ofSize: 9.5)
         versionLabel.textColor = .tertiaryLabelColor
 
-        let footerSeparator = SeparatorView()
         let footer = NSStackView(views: [versionLabel, NSView(), quitButton])
         footer.orientation = .horizontal
-        footer.alignment = .centerY
+        footer.alignment = .bottom
 
-        [
-            header,
-            headerSeparator,
-            scrollView,
-            emptyStateView,
-            footerSeparator,
-            footer,
-        ].forEach {
+        [header, scrollView, emptyLabel, footer].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
         }
@@ -336,40 +293,17 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
             header.topAnchor.constraint(equalTo: view.topAnchor, constant: 14),
             headerTop.widthAnchor.constraint(equalTo: header.widthAnchor),
 
-            headerSeparator.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            headerSeparator.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            headerSeparator.topAnchor.constraint(
-                equalTo: header.bottomAnchor,
-                constant: 10
-            ),
-            headerSeparator.heightAnchor.constraint(
-                equalToConstant: Theme.Metrics.hairline
-            ),
-
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
-            scrollView.topAnchor.constraint(equalTo: headerSeparator.bottomAnchor),
-            scrollView.bottomAnchor.constraint(
-                equalTo: footerSeparator.topAnchor
-            ),
+            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 10),
+            scrollView.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -8),
 
-            emptyStateView.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
-            emptyStateView.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
-            emptyStateView.widthAnchor.constraint(equalToConstant: 260),
+            emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
 
-            footerSeparator.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            footerSeparator.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            footerSeparator.bottomAnchor.constraint(
-                equalTo: footer.topAnchor,
-                constant: -8
-            ),
-            footerSeparator.heightAnchor.constraint(
-                equalToConstant: Theme.Metrics.hairline
-            ),
-
-            footer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
-            footer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
-            footer.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
+            footer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+            footer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            footer.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -10),
             footer.heightAnchor.constraint(equalToConstant: 30),
             titleSymbol.widthAnchor.constraint(equalToConstant: 20),
             titleSymbol.heightAnchor.constraint(equalToConstant: 20),
@@ -398,7 +332,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         clearAllTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 420_000_000)
             guard !Task.isCancelled, let self else { return }
-            clearButton.isEnabled = !isBusy && !sessions.isEmpty
+            clearButton.isEnabled = !isBusy
             clearAllTask = nil
             onClearHistory?(snapshots)
         }
@@ -417,5 +351,258 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         detailClearTask = nil
         detailLabel.stringValue = ""
         detailLabel.isHidden = true
+    }
+}
+
+@MainActor
+private final class SessionCellView: NSTableCellView {
+    private let cardView = NSView()
+    private let providerIcon = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let previewLabel = NSTextField(labelWithString: "")
+    private let statusLabel = NSTextField(labelWithString: "")
+    private let timeLabel = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        build()
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        cardView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+    }
+
+    func configure(
+        with session: SessionSummary,
+        includesPrivateDetails: Bool,
+        maximumPreviewCharacters: Int
+    ) {
+        providerIcon.image = session.testDisplayName == "AgentBell"
+            ? NSApplication.shared.applicationIconImage
+            : ProviderIcon.image(for: session.provider)
+        let displayedTitle = session.dashboardTitle(
+            includesPrivateDetails: includesPrivateDetails
+        )
+        titleLabel.stringValue = displayedTitle
+        titleLabel.toolTip = displayedTitle
+        previewLabel.stringValue = session.dashboardPreview(
+            includesPrivateDetails: includesPrivateDetails,
+            maximumCharacters: maximumPreviewCharacters
+        )
+        previewLabel.textColor = includesPrivateDetails || session.isTest
+            ? .secondaryLabelColor
+            : .tertiaryLabelColor
+        statusLabel.stringValue = session.state.displayName
+        statusLabel.textColor = color(for: session.state)
+        timeLabel.stringValue = RelativeDateTimeFormatter().localizedString(
+            for: session.updatedAt,
+            relativeTo: Date()
+        )
+    }
+
+    private func build() {
+        providerIcon.imageScaling = .scaleProportionallyUpOrDown
+
+        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        previewLabel.font = .systemFont(ofSize: 10.5)
+        previewLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        timeLabel.font = .systemFont(ofSize: 10)
+        timeLabel.textColor = .tertiaryLabelColor
+        timeLabel.alignment = .right
+
+        let detail = NSStackView(views: [statusLabel, timeLabel])
+        detail.orientation = .horizontal
+        detail.spacing = 8
+
+        let labels = NSStackView(views: [titleLabel, previewLabel, detail])
+        labels.orientation = .vertical
+        labels.alignment = .leading
+        labels.spacing = 2
+
+        let row = NSStackView(views: [providerIcon, labels])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+        cardView.wantsLayer = true
+        cardView.layer?.cornerRadius = 14
+        cardView.layer?.cornerCurve = .continuous
+        cardView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        cardView.translatesAutoresizingMaskIntoConstraints = false
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(cardView)
+        cardView.addSubview(row)
+
+        NSLayoutConstraint.activate([
+            cardView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            cardView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            cardView.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            cardView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+            row.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 12),
+            row.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -12),
+            row.centerYAnchor.constraint(equalTo: cardView.centerYAnchor),
+            providerIcon.widthAnchor.constraint(equalToConstant: 24),
+            providerIcon.heightAnchor.constraint(equalToConstant: 24),
+            detail.widthAnchor.constraint(equalTo: labels.widthAnchor),
+        ])
+    }
+
+    private func color(for state: AgentState) -> NSColor {
+        switch state {
+        case .attention: .systemOrange
+        case .finished: .systemGreen
+        case .failed: .systemRed
+        case .working, .started: .systemBlue
+        case .ended: .secondaryLabelColor
+        }
+    }
+
+    func animateFallingBackward(completion: @escaping () -> Void) {
+        guard let layer = cardView.layer else {
+            completion()
+            return
+        }
+
+        var finalTransform = CATransform3DIdentity
+        finalTransform.m34 = -1 / 450
+        finalTransform = CATransform3DTranslate(finalTransform, 0, 10, -45)
+        finalTransform = CATransform3DRotate(
+            finalTransform,
+            CGFloat.pi * 0.42,
+            1,
+            0,
+            0
+        )
+        finalTransform = CATransform3DScale(finalTransform, 0.96, 0.96, 1)
+
+        let transform = CABasicAnimation(keyPath: "transform")
+        transform.fromValue = NSValue(caTransform3D: layer.presentation()?.transform ?? layer.transform)
+        transform.toValue = NSValue(caTransform3D: finalTransform)
+
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = layer.presentation()?.opacity ?? layer.opacity
+        fade.toValue = 0
+
+        let group = CAAnimationGroup()
+        group.animations = [transform, fade]
+        group.duration = 0.38
+        group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        group.isRemovedOnCompletion = false
+        group.fillMode = .forwards
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock(completion)
+        layer.add(group, forKey: "agentbell-fall-back")
+        CATransaction.commit()
+    }
+}
+
+@MainActor
+private final class RoundedRectButton: NSButton {
+    enum Emphasis {
+        case secondary
+        case primary
+        case destructive
+    }
+
+    private let emphasis: Emphasis
+
+    init(title: String, emphasis: Emphasis = .secondary) {
+        self.emphasis = emphasis
+        super.init(frame: .zero)
+        self.title = title
+        configure()
+    }
+
+    init(symbol: String, accessibilityDescription: String) {
+        emphasis = .secondary
+        super.init(frame: .zero)
+        title = ""
+        image = NSImage(
+            systemSymbolName: symbol,
+            accessibilityDescription: accessibilityDescription
+        )?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        )
+        imagePosition = .imageOnly
+        imageScaling = .scaleProportionallyDown
+        alignment = .center
+        toolTip = accessibilityDescription
+        configure()
+        widthAnchor.constraint(equalToConstant: 30).isActive = true
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var intrinsicContentSize: NSSize {
+        guard !title.isEmpty else { return NSSize(width: 30, height: 30) }
+        return NSSize(
+            width: super.intrinsicContentSize.width + 18,
+            height: 30
+        )
+    }
+
+    private func configure() {
+        isBordered = false
+        wantsLayer = true
+        layer?.cornerRadius = 15
+        layer?.cornerCurve = .continuous
+        font = .systemFont(ofSize: 12, weight: .medium)
+        heightAnchor.constraint(equalToConstant: 30).isActive = true
+    }
+
+    override func updateLayer() {
+        super.updateLayer()
+        switch emphasis {
+        case .secondary:
+            layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+            contentTintColor = .labelColor
+        case .primary:
+            layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+            contentTintColor = .white
+        case .destructive:
+            layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.13).cgColor
+            contentTintColor = .systemRed
+        }
+        layer?.opacity = isEnabled ? 1 : 0.45
+    }
+}
+
+@MainActor
+private enum ProviderIcon {
+    private static var cache: [AgentProvider: NSImage] = [:]
+
+    static func image(for provider: AgentProvider) -> NSImage? {
+        if let cached = cache[provider] { return cached }
+        let resourceName = provider == .codex ? "Codex" : "Claude"
+        if let url = Bundle.main.url(
+            forResource: resourceName,
+            withExtension: "svg",
+            subdirectory: "ProviderIcons"
+        ),
+            let image = NSImage(contentsOf: url)
+        {
+            image.size = NSSize(width: 24, height: 24)
+            image.accessibilityDescription = provider.displayName
+            cache[provider] = image
+            return image
+        }
+
+        let fallback = NSImage(
+            systemSymbolName: provider == .codex
+                ? "chevron.left.forwardslash.chevron.right"
+                : "sparkles",
+            accessibilityDescription: provider.displayName
+        )
+        cache[provider] = fallback
+        return fallback
     }
 }

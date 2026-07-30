@@ -2,15 +2,24 @@ import XCTest
 @testable import AgentBellCore
 
 final class NtfyDeviceSetupLinkTests: XCTestCase {
-    func testBuildsHTTPSTopicURL() {
+    func testBuildsHTTPSTopicURLForGeneratedTopic() throws {
+        let topic = try XCTUnwrap(
+            SecureNtfyTopic.topic(
+                fromEntropy: Array(
+                    repeating: 0,
+                    count: SecureNtfyTopic.entropyByteCount
+                )
+            )
+        )
         let url = NtfyDeviceSetupLink.makeURL(
             serverURL: "https://ntfy.sh",
-            topic: "agentbell-AbCd1234_-"
+            topic: topic
         )
 
         XCTAssertEqual(
             url?.absoluteString,
-            "https://ntfy.sh/agentbell-AbCd1234_-"
+            "https://ntfy.sh/agentbell-"
+                + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         )
     }
 

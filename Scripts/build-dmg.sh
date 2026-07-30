@@ -14,7 +14,7 @@ release_private_key="${AGENTBELL_RELEASE_PRIVATE_KEY:-}"
 if [[ "${distribution_mode}" == "local" ]]; then
   echo "DMG creation is a distribution action. Choose one mode:" >&2
   echo "  AGENTBELL_DISTRIBUTION_MODE=developer-id (Apple-trusted)" >&2
-  echo "  AGENTBELL_DISTRIBUTION_MODE=adhoc (explicit free/untrusted fallback)" >&2
+  echo "  AGENTBELL_DISTRIBUTION_MODE=adhoc (free, not Apple-notarized)" >&2
   exit 64
 fi
 if [[ "${distribution_mode}" != "developer-id"
@@ -63,7 +63,7 @@ build=$(/usr/libexec/PlistBuddy \
   -c "Print :CFBundleVersion" \
   "${info_plist}")
 if [[ "${distribution_mode}" == "adhoc" ]]; then
-  artifact_suffix="-UNTRUSTED-adhoc"
+  artifact_suffix=""
   signing_identity="-"
 else
   artifact_suffix=""
@@ -90,7 +90,7 @@ trap cleanup EXIT
 if [[ "${distribution_mode}" == "adhoc" ]]; then
   /bin/cp \
     "${project_directory}/Resources/ADHOC_DISTRIBUTION_NOTICE.txt" \
-    "${staging_directory}/root/UNTRUSTED BUILD - READ ME.txt"
+    "${staging_directory}/root/IMPORTANT - READ BEFORE INSTALLING.txt"
 fi
 
 /bin/rm -f \

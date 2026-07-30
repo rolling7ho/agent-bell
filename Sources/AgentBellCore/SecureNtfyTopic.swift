@@ -12,6 +12,7 @@ public enum SecureNtfyTopicError: LocalizedError, Equatable {
 public enum SecureNtfyTopic {
     public static let entropyByteCount = 32
     public static let prefix = "agentbell-"
+    public static let encodedEntropyCharacterCount = 43
 
     public static func generate() throws -> String {
         var entropy = [UInt8](repeating: 0, count: entropyByteCount)
@@ -30,9 +31,17 @@ public enum SecureNtfyTopic {
 
     public static func topic(fromEntropy entropy: [UInt8]) -> String? {
         guard entropy.count == entropyByteCount else { return nil }
-        return prefix + entropy.map {
-            String(format: "%02x", $0)
-        }.joined()
+        let encodedEntropy = Data(entropy)
+            .base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .trimmingCharacters(
+                in: CharacterSet(charactersIn: "=")
+            )
+        guard encodedEntropy.utf8.count == encodedEntropyCharacterCount else {
+            return nil
+        }
+        return prefix + encodedEntropy
     }
 
     public static func migratableTopic(_ value: String?) -> String? {
@@ -42,12 +51,36 @@ public enum SecureNtfyTopic {
 
     public static func isGeneratedTopic(_ value: String) -> Bool {
         guard value.hasPrefix(prefix),
-              value.utf8.count == prefix.utf8.count + entropyByteCount * 2
+              value.utf8.count
+                == prefix.utf8.count + encodedEntropyCharacterCount
         else {
             return false
         }
-        return value.dropFirst(prefix.count).allSatisfy {
-            $0.isNumber || ("a"..."f").contains(String($0))
+
+        let encodedEntropy = String(value.dropFirst(prefix.count))
+        guard encodedEntropy.unicodeScalars.allSatisfy({ scalar in
+            switch scalar.value {
+            case 45, 48...57, 65...90, 95, 97...122:
+                true
+            default:
+                false
+            }
+        }) else {
+            return false
         }
+
+        let base64 = encodedEntropy
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+            + String(
+                repeating: "=",
+                count: (4 - encodedEntropy.utf8.count % 4) % 4
+            )
+        guard let entropy = Data(base64Encoded: base64),
+              entropy.count == entropyByteCount
+        else {
+            return false
+        }
+        return topic(fromEntropy: Array(entropy)) == value
     }
 }

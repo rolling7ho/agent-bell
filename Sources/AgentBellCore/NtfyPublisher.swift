@@ -158,7 +158,7 @@ public enum NtfyRequestBuilder {
     }
 
     public static func isValidTopic(_ topic: String) -> Bool {
-        guard (16...128).contains(topic.utf8.count) else { return false }
+        guard (16...64).contains(topic.utf8.count) else { return false }
         return topic.unicodeScalars.allSatisfy { scalar in
             switch scalar.value {
             case 45, 48...57, 65...90, 95, 97...122:

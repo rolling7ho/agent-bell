@@ -37,13 +37,13 @@ The build signs, notarizes, staples, mounts, and verifies the exact DMG and
 app. The DMG is written to `outputs/` with a SHA-256 manifest.
 
 If an Apple Developer Program membership is unavailable, AgentBell supports
-an explicitly labeled free/ad-hoc distribution mode. macOS cannot verify the
-publisher or notarize that build. The mode therefore requires a separate
-long-lived release key and produces an `UNTRUSTED-adhoc` DMG plus a detached
-signature. See [SECURITY.md](SECURITY.md) for key creation, verification, and
-the limits of this fallback.
+a free/ad-hoc distribution mode. macOS cannot verify the publisher or notarize
+that build. The mode therefore requires a separate long-lived release key and
+produces a documented DMG plus a detached signature. See
+[SECURITY.md](SECURITY.md) for key creation, verification, and the limits of
+this fallback.
 
-The current release is 1.3.0 RC (build 28). AgentBell intentionally has no
+The current release is 1.3.0 RC (build 29). AgentBell intentionally has no
 network-based automatic updater; releases are replaced as app bundles so the
 runtime remains dependency-free and offline.
 
@@ -122,15 +122,17 @@ or navigation metadata.
 
 ### Secure topic design
 
-- Topics are generated locally as `agentbell-` plus 64 lowercase hexadecimal
-  characters: 256 bits of CSPRNG entropy.
+- Topics are generated locally as `agentbell-` plus 43 unpadded base64url
+  characters: 256 bits of CSPRNG entropy in 53 total characters, within
+  ntfy's 64-character topic limit.
 - AgentBell does not query ntfy to ask whether a generated topic exists.
   ntfy topics are created implicitly, and a remote check would reveal the
   bearer-like topic while still leaving a race before first publish.
 - The topic is stored as a device-only generic-password item in macOS
   Keychain. Older values are migrated only when they match the complete
   256-bit generated format. Any weaker or malformed value is deleted and
-  replaced, then removed from UserDefaults.
+  replaced, then removed from UserDefaults. Incompatible pre-release
+  hexadecimal topics are also rotated so phone clients can subscribe.
 - The durable retry outbox does not contain the topic. It is retrieved from
   Keychain only when a request is built.
 - The topic is never included in logs, hook configuration, or process
