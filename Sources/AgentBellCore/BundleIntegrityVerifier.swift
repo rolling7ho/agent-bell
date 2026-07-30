@@ -15,7 +15,7 @@ public enum BundleIntegrityVerifier {
         var staticCode: SecStaticCode?
         let createStatus = SecStaticCodeCreateWithPath(
             normalizedURL as CFURL,
-            SecCSFlags(rawValue: kSecCSDefaultFlags),
+            SecCSFlags(rawValue: 0),
             &staticCode
         )
         guard createStatus == errSecSuccess, let staticCode else {

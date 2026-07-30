@@ -17,21 +17,31 @@ sanitized task titles and previews are an explicit opt-in.
 ```sh
 swift test --arch arm64
 /bin/zsh Scripts/build-app.sh release
-/bin/zsh Scripts/build-dmg.sh release
 ```
 
-The local build is written to `.build/AgentBell.app` and is ad-hoc signed by
-default. The DMG is written to `outputs/` and contains AgentBell plus an
-Applications shortcut for standard drag-to-install. To produce a hardened
-Developer ID build, set
-`AGENTBELL_SIGNING_IDENTITY`. To submit and staple it in the same build, also
-set `AGENTBELL_NOTARY_PROFILE` to a `notarytool` keychain profile:
+The local build is written to `.build/AgentBell.app`. It is ad-hoc signed with
+hardened runtime and verifies its complete bundle signature before processing
+events. Local mode intentionally does not create a DMG.
+
+Public Developer ID distribution is fail-closed. It requires a Developer ID
+Application identity and a `notarytool` Keychain profile:
 
 ```sh
+AGENTBELL_DISTRIBUTION_MODE=developer-id \
 AGENTBELL_SIGNING_IDENTITY="Developer ID Application: Example (TEAMID)" \
 AGENTBELL_NOTARY_PROFILE="agentbell-notary" \
 /bin/zsh Scripts/build-dmg.sh release
 ```
+
+The build signs, notarizes, staples, mounts, and verifies the exact DMG and
+app. The DMG is written to `outputs/` with a SHA-256 manifest.
+
+If an Apple Developer Program membership is unavailable, AgentBell supports
+an explicitly labeled free/ad-hoc distribution mode. macOS cannot verify the
+publisher or notarize that build. The mode therefore requires a separate
+long-lived release key and produces an `UNTRUSTED-adhoc` DMG plus a detached
+signature. See [SECURITY.md](SECURITY.md) for key creation, verification, and
+the limits of this fallback.
 
 The current release is 1.3.0 RC (build 28). AgentBell intentionally has no
 network-based automatic updater; releases are replaced as app bundles so the
@@ -118,8 +128,9 @@ or navigation metadata.
   ntfy topics are created implicitly, and a remote check would reveal the
   bearer-like topic while still leaving a race before first publish.
 - The topic is stored as a device-only generic-password item in macOS
-  Keychain. Existing valid topics from older AgentBell builds are migrated
-  once and removed from UserDefaults.
+  Keychain. Older values are migrated only when they match the complete
+  256-bit generated format. Any weaker or malformed value is deleted and
+  replaced, then removed from UserDefaults.
 - The durable retry outbox does not contain the topic. It is retrieved from
   Keychain only when a request is built.
 - The topic is never included in logs, hook configuration, or process
@@ -142,9 +153,11 @@ Phone again.
 
 On public `ntfy.sh`, an unprotected topic name effectively acts as the shared
 secret because anonymous read and write access are enabled. The 256-bit topic
-makes guessing or accidental collision infeasible, but it is not a server-side
-reservation. For enforceable read/write authorization, use an authenticated
-self-hosted ntfy server with deny-by-default ACLs.
+makes guessing or accidental collision computationally infeasible, but it is
+not a server-side reservation and absolute global uniqueness cannot be
+guaranteed. For enforceable read/write authorization, reserve and protect the
+topic in ntfy or use an authenticated self-hosted server with deny-by-default
+ACLs.
 
 Protected ntfy topics can use an optional publish access token. AgentBell
 stores that token as a device-only generic-password item in macOS Keychain,

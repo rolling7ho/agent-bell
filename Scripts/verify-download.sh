@@ -32,7 +32,7 @@ done
 checksum_line=$(/bin/cat "${checksum_path}")
 expected_hash="${checksum_line%% *}"
 expected_name="${checksum_line#*  }"
-if [[ "${expected_hash}" != [0-9a-f]## || "${#expected_hash}" -ne 64 ]]; then
+if [[ ! "${expected_hash}" =~ '^[0-9a-f]{64}$' ]]; then
   echo "Invalid SHA-256 manifest." >&2
   exit 1
 fi
