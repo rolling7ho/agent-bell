@@ -160,7 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         popover.behavior = .transient
         popover.animates = true
-        popover.contentSize = NSSize(width: 430, height: 480)
+        popover.contentSize = NSSize(width: 430, height: 500)
         popover.contentViewController = dashboard
     }
 

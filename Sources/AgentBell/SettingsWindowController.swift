@@ -48,10 +48,11 @@ final class SettingsWindowController: NSWindowController {
         )
         let window = NSWindow(contentViewController: controller)
         window.title = "AgentBell Settings"
-        window.styleMask = [.titled, .closable]
-        window.setContentSize(NSSize(width: 538, height: 640))
-        window.minSize = NSSize(width: 538, height: 640)
-        window.maxSize = NSSize(width: 538, height: 640)
+        window.styleMask = [.titled, .closable, .fullSizeContentView]
+        window.titlebarAppearsTransparent = true
+        window.setContentSize(SettingsMetrics.windowSize)
+        window.minSize = SettingsMetrics.windowSize
+        window.maxSize = SettingsMetrics.windowSize
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
@@ -71,6 +72,17 @@ final class SettingsWindowController: NSWindowController {
 }
 
 @MainActor
+private enum SettingsMetrics {
+    static let windowSize = NSSize(width: 560, height: 660)
+    static let sidebarWidth: CGFloat = 168
+    static let navigationRowWidth: CGFloat = 144
+    static let contentInset = Theme.Metrics.sectionInset
+    static let topInset: CGFloat = 32
+    static let bottomInset: CGFloat = 24
+    static let groupSpacing: CGFloat = 16
+}
+
+@MainActor
 private final class SettingsViewController: NSViewController {
     private let preferences: NotificationPreferences
     private let ntfyAccessTokenStore: NtfyAccessTokenStore
@@ -87,6 +99,7 @@ private final class SettingsViewController: NSViewController {
     private let onResetSettings: () -> Void
     private let onUninstall: () -> Void
     private let contentContainer = NSView()
+    private var currentSection: SettingsSection?
     private let generalButton = SettingsNavigationButton(title: "General", symbol: "gearshape")
     private let notificationsButton = SettingsNavigationButton(
         title: "Notifications",
@@ -101,13 +114,14 @@ private final class SettingsViewController: NSViewController {
     private let infoButton = SettingsNavigationButton(title: "Info", symbol: "info.circle")
     private let phoneStatusLabel = NSTextField(labelWithString: "")
     private let ntfyTokenField = NSSecureTextField()
-    private let integrationStatusLabel = NSTextField(
-        wrappingLabelWithString: ""
+    private let integrationSummary = IntegrationSummaryView()
+    private let codexStatusRow = StatusRow(title: "Codex hooks")
+    private let claudeStatusRow = StatusRow(title: "Claude Code hooks")
+    private let vscodeStatusRow = StatusRow(
+        title: "VS Code focus companion",
+        isOptional: true
     )
-    private let integrationDetailLabel = NSTextField(
-        wrappingLabelWithString: ""
-    )
-    private var integrationActionButton: SettingsActionButton?
+    private var integrationActionButton: PillButton?
     private var phoneActionTask: Task<Void, Never>?
     private var phoneStatusHideTask: Task<Void, Never>?
     private var topicClipboardClearTask: Task<Void, Never>?
@@ -157,7 +171,12 @@ private final class SettingsViewController: NSViewController {
     }
 
     override func loadView() {
-        view = NSView(frame: NSRect(x: 0, y: 0, width: 538, height: 640))
+        view = NSView(
+            frame: NSRect(
+                origin: .zero,
+                size: SettingsMetrics.windowSize
+            )
+        )
         buildInterface()
         show(initialSection)
     }
@@ -167,8 +186,18 @@ private final class SettingsViewController: NSViewController {
         sidebar.material = .sidebar
         sidebar.blendingMode = .behindWindow
 
-        let heading = NSTextField(labelWithString: "Settings")
-        heading.font = .systemFont(ofSize: 17, weight: .semibold)
+        let appIcon = NSImageView()
+        appIcon.image = NSApplication.shared.applicationIconImage
+        appIcon.imageScaling = .scaleProportionallyUpOrDown
+
+        let heading = NSTextField(labelWithString: "AgentBell")
+        heading.font = .systemFont(ofSize: 15, weight: .semibold)
+
+        let headingRow = NSStackView(views: [appIcon, heading])
+        headingRow.orientation = .horizontal
+        headingRow.alignment = .centerY
+        headingRow.spacing = 7
+        headingRow.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 6, right: 0)
 
         generalButton.target = self
         generalButton.action = #selector(showGeneral)
@@ -185,7 +214,7 @@ private final class SettingsViewController: NSViewController {
 
         let navigation = NSStackView(
             views: [
-                heading,
+                headingRow,
                 generalButton,
                 notificationsButton,
                 phoneButton,
@@ -197,8 +226,8 @@ private final class SettingsViewController: NSViewController {
         )
         navigation.orientation = .vertical
         navigation.alignment = .leading
-        navigation.spacing = 8
-        navigation.edgeInsets = NSEdgeInsets(top: 18, left: 12, bottom: 12, right: 12)
+        navigation.spacing = 4
+        navigation.edgeInsets = NSEdgeInsets(top: 30, left: 12, bottom: 12, right: 12)
 
         navigation.translatesAutoresizingMaskIntoConstraints = false
         sidebar.translatesAutoresizingMaskIntoConstraints = false
@@ -207,281 +236,48 @@ private final class SettingsViewController: NSViewController {
         sidebar.addSubview(navigation)
         view.addSubview(contentContainer)
 
+        let navigationButtons = [
+            generalButton,
+            notificationsButton,
+            phoneButton,
+            integrationButton,
+            testingButton,
+            infoButton,
+        ]
+
         NSLayoutConstraint.activate([
             sidebar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             sidebar.topAnchor.constraint(equalTo: view.topAnchor),
             sidebar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            sidebar.widthAnchor.constraint(equalToConstant: 156),
+            sidebar.widthAnchor.constraint(
+                equalToConstant: SettingsMetrics.sidebarWidth
+            ),
 
             navigation.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor),
             navigation.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             navigation.topAnchor.constraint(equalTo: sidebar.topAnchor),
             navigation.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
-            generalButton.widthAnchor.constraint(equalToConstant: 132),
-            notificationsButton.widthAnchor.constraint(equalToConstant: 132),
-            phoneButton.widthAnchor.constraint(equalToConstant: 132),
-            integrationButton.widthAnchor.constraint(equalToConstant: 132),
-            testingButton.widthAnchor.constraint(equalToConstant: 132),
-            infoButton.widthAnchor.constraint(equalToConstant: 132),
+            appIcon.widthAnchor.constraint(equalToConstant: 22),
+            appIcon.heightAnchor.constraint(equalToConstant: 22),
 
             contentContainer.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             contentContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             contentContainer.topAnchor.constraint(equalTo: view.topAnchor),
             contentContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
+        ] + navigationButtons.map {
+            $0.widthAnchor.constraint(
+                equalToConstant: SettingsMetrics.navigationRowWidth
+            )
+        })
     }
 
-    private func buildPhoneView() -> NSView {
-        let container = NSView()
-        let title = NSTextField(labelWithString: "Phone")
-        title.font = .systemFont(ofSize: 22, weight: .semibold)
-
-        let detail = NSTextField(
-            wrappingLabelWithString: "Send minimal AgentBell alerts through ntfy.sh. Details are opt-in; the random topic and token stay in Keychain."
-        )
-        detail.font = .systemFont(ofSize: 11)
-        detail.textColor = .secondaryLabelColor
-        detail.maximumNumberOfLines = 2
-
-        let enabledRow = SettingSwitchRow(
-            title: "Phone alerts",
-            detail: "No network request is made while this is off.",
-            isOn: preferences.phoneAlertsEnabled
-        ) { [weak self] enabled in
-            guard let self else { return }
-            preferences.phoneAlertsEnabled = enabled
-            onDeliveryPreferencesChanged()
-        }
-
-        let eventsTitle = NSTextField(labelWithString: "Send for")
-        eventsTitle.font = .systemFont(ofSize: 13, weight: .semibold)
-        eventsTitle.textColor = .secondaryLabelColor
-
-        let alertStates: [(AgentState, String)] = [
-            (.attention, "Needs attention"),
-            (.finished, "Finished"),
-            (.failed, "Failed"),
-        ]
-        let eventButtons = alertStates.map { state, label in
-            CallbackCheckbox(
-                title: label,
-                isOn: preferences.phoneAlertEnabled(for: state)
-            ) { [weak self] enabled in
-                guard let self else { return }
-                preferences.setPhoneAlertEnabled(enabled, for: state)
-                onDeliveryPreferencesChanged()
-            }
-        }
-        let events = NSStackView(views: eventButtons)
-        events.orientation = .horizontal
-        events.alignment = .centerY
-        events.distribution = .fillEqually
-        events.spacing = 8
-
-        let detailsButton = CallbackCheckbox(
-            title: "Include task titles and previews",
-            isOn: preferences.phoneAlertDetailsEnabled
-        ) { [weak self] enabled in
-            guard let self else { return }
-            preferences.phoneAlertDetailsEnabled = enabled
-            onDeliveryPreferencesChanged()
-        }
-        detailsButton.toolTip =
-            "Off by default. Details may appear on a phone lock screen."
-        let detailsDisclaimer = NSTextField(
-            wrappingLabelWithString:
-                "Sensitive previews can expose task names, questions, commands, or filenames on your phone. Leave this off unless your phone notification previews are private."
-        )
-        detailsDisclaimer.font = .systemFont(ofSize: 10)
-        detailsDisclaimer.textColor = .tertiaryLabelColor
-        detailsDisclaimer.maximumNumberOfLines = 3
-
-        let tokenTitle = NSTextField(
-            labelWithString: "Publish access token (protected topics)"
-        )
-        tokenTitle.font = .systemFont(ofSize: 13, weight: .semibold)
-        tokenTitle.textColor = .secondaryLabelColor
-
-        ntfyTokenField.placeholderString = ntfyAccessTokenStore.hasToken()
-            ? "Token saved in macOS Keychain"
-            : "Paste an ntfy publish token"
-        ntfyTokenField.usesSingleLineMode = true
-        ntfyTokenField.maximumNumberOfLines = 1
-
-        let saveTokenButton = SettingsActionButton(title: "Save") {
-            [weak self] in
-            self?.saveNtfyAccessToken()
-        }
-        saveTokenButton.widthAnchor.constraint(equalToConstant: 64).isActive = true
-        let removeTokenButton = SettingsActionButton(title: "Remove") {
-            [weak self] in
-            self?.removeNtfyAccessToken()
-        }
-        removeTokenButton.widthAnchor.constraint(equalToConstant: 72).isActive = true
-        let tokenRow = NSStackView(
-            views: [ntfyTokenField, saveTokenButton, removeTokenButton]
-        )
-        tokenRow.orientation = .horizontal
-        tokenRow.alignment = .centerY
-        tokenRow.spacing = 8
-
-        let topicTitle = NSTextField(
-            labelWithString: "Random ntfy topic (Keychain)"
-        )
-        topicTitle.font = .systemFont(ofSize: 13, weight: .semibold)
-        topicTitle.textColor = .secondaryLabelColor
-
-        let secureTopic = preferences.ntfyTopic
-        let maskedTopic = secureTopic.isEmpty
-            ? "Secure topic unavailable"
-            : "\(SecureNtfyTopic.prefix)••••••••\(secureTopic.suffix(8))"
-        let topicField = NSTextField(
-            labelWithString: maskedTopic
-        )
-        topicField.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        topicField.isSelectable = false
-        topicField.lineBreakMode = .byTruncatingMiddle
-        topicField.usesSingleLineMode = true
-        topicField.toolTip = secureTopic.isEmpty
-            ? nil
-            : "Stored securely in macOS Keychain"
-
-        let copyButton = SettingsActionButton(title: "Copy Topic") { [weak self] in
-            self?.copyNtfyTopic()
-        }
-        copyButton.widthAnchor.constraint(equalToConstant: 92).isActive = true
-        copyButton.isEnabled = !secureTopic.isEmpty
-
-        let topicRow = NSStackView(views: [topicField, copyButton])
-        topicRow.orientation = .horizontal
-        topicRow.alignment = .centerY
-        topicRow.spacing = 8
-
-        let connectButton = SettingsActionButton(
-            title: "Connect Phone…"
-        ) { [weak self] in
-            self?.showPhoneConnection()
-        }
-        connectButton.isEnabled = !secureTopic.isEmpty
-
-        let server = NSTextField(
-            labelWithString: "Server: \(NotificationPreferences.ntfyServerURL)"
-        )
-        server.font = .systemFont(ofSize: 11)
-        server.textColor = .tertiaryLabelColor
-
-        let publicTopicWarning = NSTextField(
-            wrappingLabelWithString:
-                "Important: an unreserved ntfy.sh topic acts like a password, not an authorization boundary. Treat the topic and QR code as secrets. For enforced access control, reserve and protect the topic in ntfy or use a deny-by-default self-hosted server."
-        )
-        publicTopicWarning.font = .systemFont(ofSize: 10)
-        publicTopicWarning.textColor = .systemOrange
-        publicTopicWarning.maximumNumberOfLines = 4
-
-        let testButton = SettingsActionButton(title: "Test Phone Alert") { [weak self] in
-            self?.testPhoneAlert()
-        }
-
-        phoneStatusLabel.font = .systemFont(ofSize: 11)
-        phoneStatusLabel.textColor = .secondaryLabelColor
-        phoneStatusLabel.maximumNumberOfLines = 2
-        phoneStatusLabel.lineBreakMode = .byWordWrapping
-
-        let stack = NSStackView(
-            views: [
-                title,
-                detail,
-                enabledRow,
-                eventsTitle,
-                events,
-                detailsButton,
-                detailsDisclaimer,
-                tokenTitle,
-                tokenRow,
-                topicTitle,
-                topicRow,
-                connectButton,
-                server,
-                publicTopicWarning,
-                testButton,
-                phoneStatusLabel,
-            ]
-        )
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 7
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 26),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -26),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
-            detail.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            enabledRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            events.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            detailsDisclaimer.widthAnchor.constraint(
-                equalTo: stack.widthAnchor
-            ),
-            tokenRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            topicRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            connectButton.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            publicTopicWarning.widthAnchor.constraint(
-                equalTo: stack.widthAnchor
-            ),
-            testButton.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            phoneStatusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
-        return container
-    }
-
-    private func buildTestingView() -> NSView {
-        let container = NSView()
-        let title = NSTextField(labelWithString: "Testing")
-        title.font = .systemFont(ofSize: 22, weight: .semibold)
-
-        let detail = NSTextField(
-            wrappingLabelWithString: "Send native notifications and add matching test entries to the dashboard."
-        )
-        detail.font = .systemFont(ofSize: 11)
-        detail.textColor = .secondaryLabelColor
-        detail.maximumNumberOfLines = 2
-
-        let alertButton = SettingsActionButton(title: "Test Alert") { [weak self] in
-            self?.onTestAlert()
-        }
-        let allAppsButton = SettingsActionButton(title: "Test All Apps") { [weak self] in
-            self?.onTestAllApps()
-        }
-        let surfaceButtons = NotificationSurface.allCases.map { surface in
-            SettingsActionButton(title: "Test \(surface.displayName)") { [weak self] in
-                self?.onTestSurface(surface)
-            }
-        }
-
-        let stack = NSStackView(
-            views: [title, detail, alertButton, allAppsButton] + surfaceButtons
-        )
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 7
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(stack)
-
-        let actionButtons = [alertButton, allAppsButton] + surfaceButtons
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 26),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -26),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
-            detail.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ] + actionButtons.map { $0.widthAnchor.constraint(equalTo: stack.widthAnchor) })
-        return container
-    }
+    // MARK: - Sections
 
     private func buildGeneralView() -> NSView {
-        let container = NSView()
-        let title = NSTextField(labelWithString: "General")
-        title.font = .systemFont(ofSize: 22, weight: .semibold)
+        let header = SectionHeaderView(
+            title: "General",
+            subtitle: "How AgentBell starts up and how long it keeps history."
+        )
 
         let launchRow = SettingSwitchRow(
             title: "Launch at login",
@@ -493,10 +289,6 @@ private final class SettingsViewController: NSViewController {
             onLaunchAtLoginChanged(enabled)
         }
 
-        let behaviorTitle = NSTextField(labelWithString: "Behavior")
-        behaviorTitle.font = .systemFont(ofSize: 13, weight: .semibold)
-        behaviorTitle.textColor = .secondaryLabelColor
-
         let confirmQuitRow = SettingSwitchRow(
             title: "Confirm before quitting",
             detail: "Ask before stopping AgentBell. On by default.",
@@ -505,10 +297,6 @@ private final class SettingsViewController: NSViewController {
             guard let self else { return }
             preferences.confirmBeforeQuit = enabled
         }
-
-        let historyTitle = NSTextField(labelWithString: "Dashboard history")
-        historyTitle.font = .systemFont(ofSize: 13, weight: .semibold)
-        historyTitle.textColor = .secondaryLabelColor
 
         let retentionRow = NumericPreferenceRow(
             title: "Remove after",
@@ -527,7 +315,7 @@ private final class SettingsViewController: NSViewController {
             preferences.automaticHistoryCleanupEnabled
 
         let cleanupRow = SettingSwitchRow(
-            title: "Automatically remove completed items",
+            title: "Remove completed items automatically",
             detail: "Finished, failed, ended, and test items only.",
             isOn: preferences.automaticHistoryCleanupEnabled
         ) { [weak self, weak retentionRow] enabled in
@@ -537,49 +325,27 @@ private final class SettingsViewController: NSViewController {
             onHistoryPreferencesChanged()
         }
 
-        let historyDetail = NSTextField(
-            wrappingLabelWithString:
-                "Active work and unresolved Needs attention items are never removed automatically. Default: 30 minutes."
-        )
-        historyDetail.font = .systemFont(ofSize: 10)
-        historyDetail.textColor = .tertiaryLabelColor
-        historyDetail.maximumNumberOfLines = 3
-
-        let stack = NSStackView(
-            views: [
-                title,
-                launchRow,
-                behaviorTitle,
-                confirmQuitRow,
-                historyTitle,
-                cleanupRow,
-                retentionRow,
-                historyDetail,
+        return makeSection(
+            header: header,
+            blocks: [
+                SettingsGroup(title: "Startup", rows: [launchRow]),
+                SettingsGroup(title: "Behavior", rows: [confirmQuitRow]),
+                SettingsGroup(
+                    title: "Dashboard history",
+                    rows: [cleanupRow, retentionRow]
+                ),
+                makeFootnote(
+                    "Active work and unresolved Needs attention items are never removed automatically. Default: 30 minutes."
+                ),
             ]
         )
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 5
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 26),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -26),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
-            launchRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            confirmQuitRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            cleanupRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            retentionRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            historyDetail.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
-        return container
     }
 
     private func buildNotificationsView() -> NSView {
-        let container = NSView()
-        let title = NSTextField(labelWithString: "Notifications")
-        title.font = .systemFont(ofSize: 22, weight: .semibold)
+        let header = SectionHeaderView(
+            title: "Notifications",
+            subtitle: "Native alerts on this Mac, and how much they may reveal."
+        )
 
         let previewLengthRow = NumericPreferenceRow(
             title: "Preview length",
@@ -608,27 +374,6 @@ private final class SettingsViewController: NSViewController {
             onDeliveryPreferencesChanged()
         }
 
-        let disclaimer = NSTextField(
-            wrappingLabelWithString:
-                "Sensitive previews may reveal conversation titles, questions, commands, or filenames. AgentBell removes detailed alerts when the screen locks, but you should also set macOS notification previews to When Unlocked."
-        )
-        disclaimer.font = .systemFont(ofSize: 10)
-        disclaimer.textColor = .tertiaryLabelColor
-        disclaimer.maximumNumberOfLines = 4
-        let disclaimerInset = NSStackView(views: [disclaimer])
-        disclaimerInset.orientation = .vertical
-        disclaimerInset.alignment = .leading
-        disclaimerInset.edgeInsets = NSEdgeInsets(
-            top: 0,
-            left: 12,
-            bottom: 0,
-            right: 12
-        )
-
-        let appsTitle = NSTextField(labelWithString: "Notify for")
-        appsTitle.font = .systemFont(ofSize: 13, weight: .semibold)
-        appsTitle.textColor = .secondaryLabelColor
-
         let notificationRows = NotificationSurface.allCases.map { surface in
             SettingSwitchRow(
                 title: surface.displayName,
@@ -640,20 +385,6 @@ private final class SettingsViewController: NSViewController {
                 onDeliveryPreferencesChanged()
             }
         }
-
-        let durationTitle = NSTextField(
-            labelWithString: "Minimum task duration"
-        )
-        durationTitle.font = .systemFont(ofSize: 13, weight: .semibold)
-        durationTitle.textColor = .secondaryLabelColor
-
-        let durationDetail = NSTextField(
-            wrappingLabelWithString:
-                "Set 0 to always notify. Shorter tasks stay in dashboard history."
-        )
-        durationDetail.font = .systemFont(ofSize: 10)
-        durationDetail.textColor = .tertiaryLabelColor
-        durationDetail.maximumNumberOfLines = 2
 
         let durationSurfaces: [NotificationSurface] = [
             .chatGPTDesktop,
@@ -670,154 +401,275 @@ private final class SettingsViewController: NSViewController {
                 unit: "seconds"
             ) { [weak self] duration in
                 guard let self else { return }
-                preferences.setMinimumTaskDuration(
-                    duration,
-                    for: surface
-                )
+                preferences.setMinimumTaskDuration(duration, for: surface)
                 onDeliveryPreferencesChanged()
             }
         }
 
-        let stack = NSStackView(
-            views: [
-                title,
-                privateDetailsRow,
-                disclaimerInset,
-                previewLengthRow,
-                appsTitle,
-            ] + notificationRows + [
-                durationTitle,
-                durationDetail,
-            ] + durationRows
+        return makeSection(
+            header: header,
+            blocks: [
+                SettingsGroup(
+                    title: "Privacy",
+                    rows: [privateDetailsRow, previewLengthRow]
+                ),
+                InlineNoticeView(
+                    style: .info,
+                    text: "Sensitive previews may reveal conversation titles, questions, commands, or filenames. AgentBell removes detailed alerts when the screen locks; also set macOS notification previews to When Unlocked.",
+                    maximumLines: 4
+                ),
+                SettingsGroup(title: "Notify for", rows: notificationRows),
+                SettingsGroup(
+                    title: "Minimum task duration",
+                    rows: durationRows
+                ),
+                makeFootnote(
+                    "Set 0 to always notify. Shorter tasks stay in dashboard history."
+                ),
+            ]
         )
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 5
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(stack)
+    }
 
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(
-                equalTo: container.leadingAnchor,
-                constant: 26
-            ),
-            stack.trailingAnchor.constraint(
-                equalTo: container.trailingAnchor,
-                constant: -26
-            ),
-            stack.topAnchor.constraint(
-                equalTo: container.topAnchor,
-                constant: 24
-            ),
-            privateDetailsRow.widthAnchor.constraint(
-                equalTo: stack.widthAnchor
-            ),
-            disclaimerInset.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            disclaimer.widthAnchor.constraint(
-                equalTo: disclaimerInset.widthAnchor,
-                constant: -24
-            ),
-            previewLengthRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            durationDetail.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ] + (notificationRows + durationRows).map {
-            $0.widthAnchor.constraint(equalTo: stack.widthAnchor)
-        })
-        return container
+    private func buildPhoneView() -> NSView {
+        let header = SectionHeaderView(
+            title: "Phone",
+            subtitle: "Optional ntfy.sh alerts. The topic and token stay in Keychain."
+        )
+
+        let enabledRow = SettingSwitchRow(
+            title: "Phone alerts",
+            detail: "No network request is made while this is off.",
+            isOn: preferences.phoneAlertsEnabled
+        ) { [weak self] enabled in
+            guard let self else { return }
+            preferences.phoneAlertsEnabled = enabled
+            onDeliveryPreferencesChanged()
+        }
+
+        let alertStates: [(AgentState, String)] = [
+            (.attention, "Needs attention"),
+            (.finished, "Finished"),
+            (.failed, "Failed"),
+        ]
+        let eventRows = alertStates.map { state, label in
+            SettingSwitchRow(
+                title: label,
+                detail: nil,
+                isOn: preferences.phoneAlertEnabled(for: state)
+            ) { [weak self] enabled in
+                guard let self else { return }
+                preferences.setPhoneAlertEnabled(enabled, for: state)
+                onDeliveryPreferencesChanged()
+            }
+        }
+
+        let detailsRow = SettingSwitchRow(
+            title: "Include task titles and previews",
+            detail: "Off by default. Details may appear on a lock screen.",
+            isOn: preferences.phoneAlertDetailsEnabled
+        ) { [weak self] enabled in
+            guard let self else { return }
+            preferences.phoneAlertDetailsEnabled = enabled
+            onDeliveryPreferencesChanged()
+        }
+
+        ntfyTokenField.placeholderString = ntfyAccessTokenStore.hasToken()
+            ? "Token saved in macOS Keychain"
+            : "Paste an ntfy publish token"
+        ntfyTokenField.usesSingleLineMode = true
+        ntfyTokenField.maximumNumberOfLines = 1
+        ntfyTokenField.font = .systemFont(ofSize: 12)
+
+        let saveTokenButton = PillButton(
+            title: "Save",
+            width: 62
+        ) { [weak self] in
+            self?.saveNtfyAccessToken()
+        }
+        let removeTokenButton = PillButton(
+            title: "Remove",
+            width: 74
+        ) { [weak self] in
+            self?.removeNtfyAccessToken()
+        }
+        let tokenRow = FieldRow(
+            title: "Publish access token",
+            detail: "Required for reserved or protected topics.",
+            field: ntfyTokenField,
+            accessories: [saveTokenButton, removeTokenButton]
+        )
+
+        let secureTopic = preferences.ntfyTopic
+        let maskedTopic = secureTopic.isEmpty
+            ? "Secure topic unavailable"
+            : "\(SecureNtfyTopic.prefix)••••••••\(secureTopic.suffix(8))"
+        let copyButton = IconButton(
+            symbol: "doc.on.doc",
+            accessibilityDescription: "Copy topic",
+            pointSize: 12,
+            size: 26
+        )
+        copyButton.target = self
+        copyButton.action = #selector(copyTopicPressed)
+        copyButton.isEnabled = !secureTopic.isEmpty
+        let topicRow = ValueRow(
+            title: "Random ntfy topic",
+            value: maskedTopic,
+            monospaced: true,
+            accessory: copyButton
+        )
+        topicRow.toolTip = secureTopic.isEmpty
+            ? nil
+            : "Stored securely in macOS Keychain"
+
+        let serverRow = ValueRow(
+            title: "Server",
+            value: NotificationPreferences.ntfyServerURL,
+            monospaced: false,
+            accessory: nil
+        )
+
+        let connectButton = PillButton(
+            title: "Connect Phone…",
+            style: .primary,
+            symbol: "qrcode"
+        ) { [weak self] in
+            self?.showPhoneConnection()
+        }
+        connectButton.isEnabled = !secureTopic.isEmpty
+        let testButton = PillButton(
+            title: "Test Phone Alert",
+            symbol: "paperplane"
+        ) { [weak self] in
+            self?.testPhoneAlert()
+        }
+        let actionRow = NSStackView(views: [connectButton, testButton])
+        actionRow.orientation = .horizontal
+        actionRow.distribution = .fillEqually
+        actionRow.spacing = 8
+
+        phoneStatusLabel.font = .systemFont(ofSize: 11)
+        phoneStatusLabel.textColor = .secondaryLabelColor
+        phoneStatusLabel.maximumNumberOfLines = 2
+        phoneStatusLabel.lineBreakMode = .byWordWrapping
+
+        return makeSection(
+            header: header,
+            blocks: [
+                SettingsGroup(title: "Delivery", rows: [enabledRow] + eventRows),
+                SettingsGroup(title: "Privacy", rows: [detailsRow]),
+                InlineNoticeView(
+                    style: .info,
+                    text: "Previews can expose task names, questions, commands, or filenames on your phone. Leave this off unless your phone previews are private.",
+                    maximumLines: 3
+                ),
+                SettingsGroup(
+                    title: "Connection",
+                    rows: [tokenRow, topicRow, serverRow]
+                ),
+                actionRow,
+                InlineNoticeView(
+                    style: .warning,
+                    text: "An unreserved ntfy.sh topic acts like a password, not an authorization boundary. Treat the topic and QR code as secrets. For enforced access control, reserve and protect the topic in ntfy or use a deny-by-default self-hosted server.",
+                    maximumLines: 4
+                ),
+                phoneStatusLabel,
+            ]
+        )
     }
 
     private func buildIntegrationView() -> NSView {
-        let container = NSView()
-        let title = NSTextField(labelWithString: "Integration")
-        title.font = .systemFont(ofSize: 22, weight: .semibold)
-
-        integrationStatusLabel.font = .systemFont(
-            ofSize: 15,
-            weight: .semibold
+        let header = SectionHeaderView(
+            title: "Integration",
+            subtitle: "Hooks that let Codex and Claude Code report lifecycle events."
         )
-        integrationStatusLabel.maximumNumberOfLines = 2
 
-        integrationDetailLabel.font = .systemFont(ofSize: 11)
-        integrationDetailLabel.textColor = .secondaryLabelColor
-        integrationDetailLabel.maximumNumberOfLines = 5
-
-        let explanation = NSTextField(
-            wrappingLabelWithString:
-                "AgentBell-owned hooks receive bounded lifecycle metadata from Codex and Claude Code. Repairing replaces only AgentBell-owned entries and preserves unrelated configuration."
-        )
-        explanation.font = .systemFont(ofSize: 10.5)
-        explanation.textColor = .tertiaryLabelColor
-        explanation.maximumNumberOfLines = 4
-
-        let actionButton = SettingsActionButton(
+        let actionButton = PillButton(
             title: "Repair Integration",
-            style: .primary
+            style: .primary,
+            symbol: "wrench.and.screwdriver"
         ) { [weak self] in
             self?.repairIntegration()
         }
         integrationActionButton = actionButton
 
-        let trustNotice = NSTextField(
-            wrappingLabelWithString:
-                "After installing or repairing Codex hooks, open /hooks in Codex and approve AgentBell if Codex asks you to trust the integration."
-        )
-        trustNotice.font = .systemFont(ofSize: 10)
-        trustNotice.textColor = .tertiaryLabelColor
-        trustNotice.maximumNumberOfLines = 3
-
-        let stack = NSStackView(
-            views: [
-                title,
-                integrationStatusLabel,
-                integrationDetailLabel,
-                explanation,
+        let section = makeSection(
+            header: header,
+            blocks: [
+                integrationSummary,
+                SettingsGroup(
+                    title: "Installed hooks",
+                    rows: [codexStatusRow, claudeStatusRow, vscodeStatusRow]
+                ),
                 actionButton,
-                trustNotice,
+                makeFootnote(
+                    "Repairing replaces only AgentBell-owned entries and preserves unrelated configuration."
+                ),
+                InlineNoticeView(
+                    style: .info,
+                    text: "After installing or repairing Codex hooks, open /hooks in Codex and approve AgentBell if Codex asks you to trust the integration.",
+                    maximumLines: 3
+                ),
             ]
         )
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 10
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(
-                equalTo: container.leadingAnchor,
-                constant: 26
-            ),
-            stack.trailingAnchor.constraint(
-                equalTo: container.trailingAnchor,
-                constant: -26
-            ),
-            stack.topAnchor.constraint(
-                equalTo: container.topAnchor,
-                constant: 24
-            ),
-            integrationStatusLabel.widthAnchor.constraint(
-                equalTo: stack.widthAnchor
-            ),
-            integrationDetailLabel.widthAnchor.constraint(
-                equalTo: stack.widthAnchor
-            ),
-            explanation.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            actionButton.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            trustNotice.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
         updateIntegrationPresentation()
-        return container
+        return section
+    }
+
+    private func buildTestingView() -> NSView {
+        let header = SectionHeaderView(
+            title: "Testing",
+            subtitle: "Send native notifications and add matching dashboard entries."
+        )
+
+        let alertRow = ActionRow(
+            title: "Generic alert",
+            detail: "One notification with no app-specific routing.",
+            buttonTitle: "Send"
+        ) { [weak self] in
+            self?.onTestAlert()
+        }
+        let allAppsRow = ActionRow(
+            title: "Every app at once",
+            detail: "One notification per supported surface.",
+            buttonTitle: "Send All"
+        ) { [weak self] in
+            self?.onTestAllApps()
+        }
+        let surfaceRows = NotificationSurface.allCases.map { surface in
+            ActionRow(
+                title: surface.displayName,
+                detail: nil,
+                buttonTitle: "Send"
+            ) { [weak self] in
+                self?.onTestSurface(surface)
+            }
+        }
+
+        return makeSection(
+            header: header,
+            blocks: [
+                SettingsGroup(
+                    title: "Quick checks",
+                    rows: [alertRow, allAppsRow]
+                ),
+                SettingsGroup(title: "Single surface", rows: surfaceRows),
+                makeFootnote(
+                    "If macOS accepts an alert but no banner appears, turn off Focus or allow AgentBell in the active Focus mode."
+                ),
+            ]
+        )
     }
 
     private func buildInfoView() -> NSView {
-        let container = NSView()
-        let title = NSTextField(labelWithString: "Info")
-        title.font = .systemFont(ofSize: 22, weight: .semibold)
-
         let icon = NSImageView()
         icon.image = NSApplication.shared.applicationIconImage
         icon.imageScaling = .scaleProportionallyUpOrDown
 
         let name = NSTextField(labelWithString: "AgentBell")
         name.font = .systemFont(ofSize: 18, weight: .semibold)
+        name.alignment = .center
+
         let version = Bundle.main.object(
             forInfoDictionaryKey: "CFBundleShortVersionString"
         ) as? String ?? "Unknown"
@@ -826,62 +678,106 @@ private final class SettingsViewController: NSViewController {
             labelWithString: "Version \(version) (build \(build))"
         )
         versionLabel.textColor = .secondaryLabelColor
+        versionLabel.alignment = .center
 
         let detail = NSTextField(
             wrappingLabelWithString: "A private macOS notifier for ChatGPT Desktop, Codex, Claude Desktop, and Claude Code. Native details are opt-in and lock-aware. ntfy is optional, minimal by default, and Keychain-protected."
         )
+        detail.font = .systemFont(ofSize: 11)
         detail.textColor = .secondaryLabelColor
         detail.alignment = .center
         detail.maximumNumberOfLines = 4
 
-        let resetButton = SettingsActionButton(
-            title: "Reset All Settings…"
+        let about = NSStackView(views: [icon, name, versionLabel, detail])
+        about.orientation = .vertical
+        about.alignment = .centerX
+        about.spacing = 6
+        about.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+
+        let resetRow = ActionRow(
+            title: "Reset all settings",
+            detail: "Restores defaults and creates a new secure topic.",
+            buttonTitle: "Reset…"
         ) { [weak self] in
             self?.onResetSettings()
         }
-
-        let uninstallButton = SettingsActionButton(
-            title: "Uninstall AgentBell…",
-            style: .destructive
+        let uninstallRow = ActionRow(
+            title: "Uninstall AgentBell",
+            detail: "Removes hooks, history, and stored secrets.",
+            buttonTitle: "Uninstall…",
+            buttonStyle: .destructive
         ) { [weak self] in
             self?.onUninstall()
         }
 
-        let stack = NSStackView(
-            views: [
-                title,
-                icon,
-                name,
-                versionLabel,
-                detail,
-                resetButton,
-                uninstallButton,
+        let section = makeSection(
+            header: SectionHeaderView(title: "Info", subtitle: nil),
+            blocks: [
+                about,
+                SettingsGroup(
+                    title: "Reset and removal",
+                    rows: [resetRow, uninstallRow]
+                ),
             ]
         )
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 76),
+            icon.heightAnchor.constraint(equalToConstant: 76),
+        ])
+        return section
+    }
+
+    // MARK: - Section scaffolding
+
+    /// Lays out a section header plus content blocks inside a scroll view so
+    /// long sections stay reachable in the fixed-size window.
+    private func makeSection(
+        header: SectionHeaderView,
+        blocks: [NSView]
+    ) -> NSView {
+        let container = NSView()
+        let stack = NSStackView(views: [header] + blocks)
         stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = 8
+        stack.alignment = .leading
+        stack.spacing = SettingsMetrics.groupSpacing
+        stack.setCustomSpacing(20, after: header)
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(stack)
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 30),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -30),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
-            title.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 82),
-            icon.heightAnchor.constraint(equalToConstant: 82),
-            icon.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 24),
-            detail.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            detail.topAnchor.constraint(equalTo: versionLabel.bottomAnchor, constant: 12),
-            resetButton.widthAnchor.constraint(equalToConstant: 180),
-            resetButton.topAnchor.constraint(equalTo: detail.bottomAnchor, constant: 12),
-            uninstallButton.widthAnchor.constraint(equalToConstant: 180),
-        ])
-        return container
+            stack.leadingAnchor.constraint(
+                equalTo: container.leadingAnchor,
+                constant: SettingsMetrics.contentInset
+            ),
+            stack.trailingAnchor.constraint(
+                equalTo: container.trailingAnchor,
+                constant: -SettingsMetrics.contentInset
+            ),
+            stack.topAnchor.constraint(
+                equalTo: container.topAnchor,
+                constant: SettingsMetrics.topInset
+            ),
+            stack.bottomAnchor.constraint(
+                equalTo: container.bottomAnchor,
+                constant: -SettingsMetrics.bottomInset
+            ),
+        ] + ([header] + blocks).map {
+            $0.widthAnchor.constraint(equalTo: stack.widthAnchor)
+        })
+        return Theme.makeScrollView(content: container)
+    }
+
+    private func makeFootnote(_ text: String) -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = Theme.Text.footnote
+        label.textColor = .tertiaryLabelColor
+        label.maximumNumberOfLines = 4
+        return label
     }
 
     private func show(_ section: SettingsSection) {
+        guard currentSection != section else { return }
+        currentSection = section
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
         let selectedView: NSView
         switch section {
@@ -906,6 +802,12 @@ private final class SettingsViewController: NSViewController {
             selectedView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
             selectedView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
+        selectedView.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.14
+            selectedView.animator().alphaValue = 1
+        }
+
         generalButton.isSelected = section == .general
         notificationsButton.isSelected = section == .notifications
         phoneButton.isSelected = section == .phone
@@ -938,11 +840,15 @@ private final class SettingsViewController: NSViewController {
         show(.testing)
     }
 
+    // MARK: - Actions
+
     private func repairIntegration() {
         guard integrationActionTask == nil else { return }
         integrationActionButton?.isEnabled = false
-        integrationStatusLabel.stringValue = "Repairing integration…"
-        integrationStatusLabel.textColor = .secondaryLabelColor
+        integrationSummary.update(
+            state: .working,
+            message: "Repairing integration…"
+        )
         integrationActionTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -951,11 +857,11 @@ private final class SettingsViewController: NSViewController {
                 updateIntegrationPresentation()
             } catch {
                 guard !Task.isCancelled else { return }
-                integrationStatusLabel.stringValue =
-                    "Integration could not be repaired"
-                integrationStatusLabel.textColor = .systemRed
-                integrationDetailLabel.stringValue =
-                    error.localizedDescription
+                integrationSummary.update(
+                    state: .failed,
+                    message: "Integration could not be repaired",
+                    detail: error.localizedDescription
+                )
             }
             integrationActionButton?.isEnabled = true
             integrationActionTask = nil
@@ -963,22 +869,26 @@ private final class SettingsViewController: NSViewController {
     }
 
     private func updateIntegrationPresentation() {
-        let installed = integrationStatus.codex
-            && integrationStatus.claude
-        integrationStatusLabel.stringValue = installed
-            ? "Integration installed"
-            : "Integration needs setup or repair"
-        integrationStatusLabel.textColor = installed
-            ? .systemGreen
-            : .systemOrange
-        integrationDetailLabel.stringValue = [
-            "Codex hooks: \(integrationStatus.codex ? "Installed" : "Missing")",
-            "Claude Code hooks: \(integrationStatus.claude ? "Installed" : "Missing")",
-            "VS Code focus companion: \(integrationStatus.vscode ? "Installed" : "Not installed (optional)")",
-        ].joined(separator: "\n")
+        let installed = integrationStatus.codex && integrationStatus.claude
+        integrationSummary.update(
+            state: installed ? .installed : .needsSetup,
+            message: installed
+                ? "Integration installed"
+                : "Integration needs setup or repair",
+            detail: installed
+                ? "AgentBell owns its hook entries in both providers."
+                : "Install the hooks so lifecycle events reach AgentBell."
+        )
+        codexStatusRow.update(isInstalled: integrationStatus.codex)
+        claudeStatusRow.update(isInstalled: integrationStatus.claude)
+        vscodeStatusRow.update(isInstalled: integrationStatus.vscode)
         integrationActionButton?.title = installed
             ? "Repair Integration"
             : "Install Integration"
+    }
+
+    @objc private func copyTopicPressed() {
+        copyNtfyTopic()
     }
 
     private func copyNtfyTopic() {
@@ -1114,56 +1024,108 @@ private final class SettingsViewController: NSViewController {
     }
 }
 
+// MARK: - Sidebar
+
 @MainActor
 private final class SettingsNavigationButton: NSButton {
     var isSelected = false {
-        didSet { needsDisplay = true }
+        didSet {
+            applyTint()
+            needsDisplay = true
+        }
     }
 
+    private let icon = NSImageView()
+    private let label: NSTextField
+    private var isHovered = false
+    private var hoverTrackingArea: NSTrackingArea?
+
     init(title: String, symbol: String) {
+        label = NSTextField(labelWithString: title)
         super.init(frame: .zero)
         self.title = ""
-        let icon = NSImageView()
-        icon.image = NSImage(
-            systemSymbolName: symbol,
+        icon.image = Theme.symbolImage(
+            symbol,
+            pointSize: 13,
+            weight: .medium,
             accessibilityDescription: title
         )
-        icon.contentTintColor = .secondaryLabelColor
-        let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 14, weight: .medium)
+        icon.imageScaling = .scaleProportionallyDown
+        label.font = .systemFont(ofSize: 13, weight: .medium)
 
         let content = MouseTransparentStackView(views: [icon, label])
         content.orientation = .horizontal
         content.alignment = .centerY
-        content.spacing = 7
+        content.spacing = 8
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
 
         isBordered = false
         wantsLayer = true
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = 7
+        layer?.cornerCurve = .continuous
         setAccessibilityLabel(title)
-        heightAnchor.constraint(equalToConstant: 40).isActive = true
+        heightAnchor.constraint(equalToConstant: 32).isActive = true
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            content.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+            content.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -9),
             content.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 17),
             icon.heightAnchor.constraint(equalToConstant: 17),
         ])
+        applyTint()
     }
 
     required init?(coder: NSCoder) {
         nil
     }
 
-    override func updateLayer() {
-        super.updateLayer()
-        layer?.backgroundColor = isSelected
-            ? NSColor.controlAccentColor.withAlphaComponent(0.18).cgColor
-            : NSColor.clear.cgColor
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
     }
 
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        isHovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        isHovered = false
+        needsDisplay = true
+    }
+
+    private func applyTint() {
+        icon.contentTintColor = isSelected
+            ? .controlAccentColor
+            : .secondaryLabelColor
+        label.textColor = isSelected ? .controlAccentColor : .labelColor
+    }
+
+    override func updateLayer() {
+        super.updateLayer()
+        if isSelected {
+            layer?.backgroundColor = NSColor.controlAccentColor
+                .withAlphaComponent(0.16)
+                .cgColor
+        } else {
+            layer?.backgroundColor = isHovered
+                ? Theme.Palette.hover.cgColor
+                : NSColor.clear.cgColor
+        }
+    }
 }
 
 @MainActor
@@ -1171,6 +1133,16 @@ private final class MouseTransparentStackView: NSStackView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
     }
+}
+
+// MARK: - Group rows
+
+/// Shared padding and height rules for every row inside a `SettingsGroup`.
+@MainActor
+private enum RowMetrics {
+    static let inset = Theme.Metrics.rowInset
+    static let compactHeight: CGFloat = 40
+    static let regularHeight: CGFloat = 52
 }
 
 @MainActor
@@ -1183,47 +1155,49 @@ private final class SettingSwitchRow: NSView {
     ) {
         super.init(frame: .zero)
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        titleLabel.font = Theme.Text.rowTitle
         let labels: NSStackView
         if let detail {
             let detailLabel = NSTextField(labelWithString: detail)
-            detailLabel.font = .systemFont(ofSize: 11)
+            detailLabel.font = Theme.Text.rowDetail
             detailLabel.textColor = .secondaryLabelColor
+            detailLabel.lineBreakMode = .byTruncatingTail
             labels = NSStackView(views: [titleLabel, detailLabel])
             labels.orientation = .vertical
             labels.alignment = .leading
-            labels.spacing = 2
+            labels.spacing = 1
         } else {
             labels = NSStackView(views: [titleLabel])
         }
 
         let toggle = CallbackSwitch(isOn: isOn, onChange: onChange)
-        let spacer = NSView()
-        let row = NSStackView(views: [labels, spacer, toggle])
+        toggle.setAccessibilityLabel(title)
+        let row = NSStackView(views: [labels, NSView(), toggle])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
 
-        wantsLayer = true
-        layer?.cornerRadius = 10
-        needsDisplay = true
-
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: detail == nil ? 34 : 50),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            heightAnchor.constraint(
+                equalToConstant: detail == nil
+                    ? RowMetrics.compactHeight
+                    : RowMetrics.regularHeight
+            ),
+            row.leadingAnchor.constraint(
+                equalTo: leadingAnchor,
+                constant: RowMetrics.inset
+            ),
+            row.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -RowMetrics.inset
+            ),
             row.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
     required init?(coder: NSCoder) {
         nil
-    }
-
-    override func updateLayer() {
-        super.updateLayer()
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
     }
 }
 
@@ -1232,6 +1206,8 @@ private final class NumericPreferenceRow: NSView, NSTextFieldDelegate {
     private let onChange: (Double) -> Void
     private let field = NSTextField()
     private let stepper = NSStepper()
+    private let titleLabel: NSTextField
+    private let unitLabel: NSTextField
     private let minimum: Double
     private let maximum: Double
     private let allowsDecimals: Bool
@@ -1239,7 +1215,12 @@ private final class NumericPreferenceRow: NSView, NSTextFieldDelegate {
         didSet {
             field.isEnabled = controlsEnabled
             stepper.isEnabled = controlsEnabled
-            alphaValue = controlsEnabled ? 1 : 0.5
+            titleLabel.textColor = controlsEnabled
+                ? .labelColor
+                : .tertiaryLabelColor
+            unitLabel.textColor = controlsEnabled
+                ? .secondaryLabelColor
+                : .tertiaryLabelColor
         }
     }
 
@@ -1257,10 +1238,11 @@ private final class NumericPreferenceRow: NSView, NSTextFieldDelegate {
         self.maximum = maximum
         self.allowsDecimals = allowsDecimals
         self.onChange = onChange
+        titleLabel = NSTextField(labelWithString: title)
+        unitLabel = NSTextField(labelWithString: unit)
         super.init(frame: .zero)
 
-        let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        titleLabel.font = Theme.Text.rowTitle
 
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
@@ -1275,7 +1257,8 @@ private final class NumericPreferenceRow: NSView, NSTextFieldDelegate {
         field.alignment = .right
         field.doubleValue = normalized(value)
         field.delegate = self
-        field.widthAnchor.constraint(equalToConstant: 68).isActive = true
+        field.setAccessibilityLabel(title)
+        field.widthAnchor.constraint(equalToConstant: 66).isActive = true
 
         stepper.minValue = minimum
         stepper.maxValue = maximum
@@ -1284,8 +1267,7 @@ private final class NumericPreferenceRow: NSView, NSTextFieldDelegate {
         stepper.target = self
         stepper.action = #selector(stepperChanged)
 
-        let unitLabel = NSTextField(labelWithString: unit)
-        unitLabel.font = .systemFont(ofSize: 11)
+        unitLabel.font = Theme.Text.rowDetail
         unitLabel.textColor = .secondaryLabelColor
 
         let row = NSStackView(
@@ -1297,25 +1279,22 @@ private final class NumericPreferenceRow: NSView, NSTextFieldDelegate {
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
 
-        wantsLayer = true
-        layer?.cornerRadius = 10
-        needsDisplay = true
-
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 38),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            heightAnchor.constraint(equalToConstant: RowMetrics.compactHeight),
+            row.leadingAnchor.constraint(
+                equalTo: leadingAnchor,
+                constant: RowMetrics.inset
+            ),
+            row.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -RowMetrics.inset
+            ),
             row.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
     required init?(coder: NSCoder) {
         nil
-    }
-
-    override func updateLayer() {
-        super.updateLayer()
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
     }
 
     @objc private func stepperChanged() {
@@ -1340,6 +1319,338 @@ private final class NumericPreferenceRow: NSView, NSTextFieldDelegate {
     }
 }
 
+/// Row whose trailing control is a button, used for tests and destructive work.
+@MainActor
+private final class ActionRow: NSView {
+    init(
+        title: String,
+        detail: String?,
+        buttonTitle: String,
+        buttonStyle: PillButton.Style = .secondary,
+        onPress: @escaping () -> Void
+    ) {
+        super.init(frame: .zero)
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = Theme.Text.rowTitle
+
+        let labels: NSStackView
+        if let detail {
+            let detailLabel = NSTextField(labelWithString: detail)
+            detailLabel.font = Theme.Text.rowDetail
+            detailLabel.textColor = .secondaryLabelColor
+            detailLabel.lineBreakMode = .byTruncatingTail
+            labels = NSStackView(views: [titleLabel, detailLabel])
+            labels.orientation = .vertical
+            labels.alignment = .leading
+            labels.spacing = 1
+        } else {
+            labels = NSStackView(views: [titleLabel])
+        }
+
+        let button = PillButton(
+            title: buttonTitle,
+            style: buttonStyle,
+            onPress: onPress
+        )
+        button.setAccessibilityLabel("\(buttonTitle) \(title)")
+
+        let row = NSStackView(views: [labels, NSView(), button])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(
+                equalToConstant: detail == nil
+                    ? RowMetrics.compactHeight + 4
+                    : RowMetrics.regularHeight
+            ),
+            row.leadingAnchor.constraint(
+                equalTo: leadingAnchor,
+                constant: RowMetrics.inset
+            ),
+            row.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -RowMetrics.inset
+            ),
+            row.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+}
+
+/// Read-only value with an optional trailing accessory, such as Copy.
+@MainActor
+private final class ValueRow: NSView {
+    init(
+        title: String,
+        value: String,
+        monospaced: Bool,
+        accessory: NSView?
+    ) {
+        super.init(frame: .zero)
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = Theme.Text.rowTitle
+
+        let valueLabel = NSTextField(labelWithString: value)
+        valueLabel.font = monospaced
+            ? .monospacedSystemFont(ofSize: 11, weight: .regular)
+            : Theme.Text.rowDetail
+        valueLabel.textColor = .secondaryLabelColor
+        valueLabel.lineBreakMode = .byTruncatingMiddle
+        valueLabel.usesSingleLineMode = true
+        valueLabel.alignment = .right
+
+        var views: [NSView] = [titleLabel, NSView(), valueLabel]
+        if let accessory {
+            views.append(accessory)
+        }
+        let row = NSStackView(views: views)
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: RowMetrics.compactHeight),
+            row.leadingAnchor.constraint(
+                equalTo: leadingAnchor,
+                constant: RowMetrics.inset
+            ),
+            row.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -RowMetrics.inset
+            ),
+            row.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+}
+
+/// Two-line row that hosts a text field plus its confirming buttons.
+@MainActor
+private final class FieldRow: NSView {
+    init(
+        title: String,
+        detail: String?,
+        field: NSTextField,
+        accessories: [NSView]
+    ) {
+        super.init(frame: .zero)
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = Theme.Text.rowTitle
+        field.setAccessibilityLabel(title)
+
+        var headerViews: [NSView] = [titleLabel]
+        if let detail {
+            let detailLabel = NSTextField(labelWithString: detail)
+            detailLabel.font = Theme.Text.rowDetail
+            detailLabel.textColor = .secondaryLabelColor
+            detailLabel.lineBreakMode = .byTruncatingTail
+            headerViews.append(detailLabel)
+        }
+        let labels = NSStackView(views: headerViews)
+        labels.orientation = .vertical
+        labels.alignment = .leading
+        labels.spacing = 1
+
+        let controls = NSStackView(views: [field] + accessories)
+        controls.orientation = .horizontal
+        controls.alignment = .centerY
+        controls.spacing = 8
+
+        let stack = NSStackView(views: [labels, controls])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 7
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(
+                equalTo: leadingAnchor,
+                constant: RowMetrics.inset
+            ),
+            stack.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -RowMetrics.inset
+            ),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            controls.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+}
+
+/// Installed / missing indicator for one provider hook.
+@MainActor
+private final class StatusRow: NSView {
+    private let indicator = NSImageView()
+    private let valueLabel = NSTextField(labelWithString: "")
+    private let isOptional: Bool
+
+    init(title: String, isOptional: Bool = false) {
+        self.isOptional = isOptional
+        super.init(frame: .zero)
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = Theme.Text.rowTitle
+        valueLabel.font = Theme.Text.rowDetail
+        indicator.imageScaling = .scaleProportionallyDown
+
+        let row = NSStackView(
+            views: [titleLabel, NSView(), valueLabel, indicator]
+        )
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 6
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: RowMetrics.compactHeight),
+            row.leadingAnchor.constraint(
+                equalTo: leadingAnchor,
+                constant: RowMetrics.inset
+            ),
+            row.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -RowMetrics.inset
+            ),
+            row.centerYAnchor.constraint(equalTo: centerYAnchor),
+            indicator.widthAnchor.constraint(equalToConstant: 14),
+            indicator.heightAnchor.constraint(equalToConstant: 14),
+        ])
+        update(isInstalled: false)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func update(isInstalled: Bool) {
+        let tint: NSColor = isInstalled
+            ? .systemGreen
+            : (isOptional ? .secondaryLabelColor : .systemOrange)
+        valueLabel.stringValue = isInstalled
+            ? "Installed"
+            : (isOptional ? "Not installed" : "Missing")
+        valueLabel.textColor = tint
+        indicator.image = Theme.symbolImage(
+            isInstalled ? "checkmark.circle.fill" : "exclamationmark.circle.fill",
+            pointSize: 12,
+            weight: .semibold,
+            accessibilityDescription: valueLabel.stringValue
+        )
+        indicator.contentTintColor = tint
+    }
+}
+
+/// Headline card summarizing overall integration health.
+@MainActor
+private final class IntegrationSummaryView: NSView {
+    enum State {
+        case installed
+        case needsSetup
+        case working
+        case failed
+
+        var tint: NSColor {
+            switch self {
+            case .installed: .systemGreen
+            case .needsSetup: .systemOrange
+            case .working: .secondaryLabelColor
+            case .failed: .systemRed
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .installed: "checkmark.seal.fill"
+            case .needsSetup: "exclamationmark.triangle.fill"
+            case .working: "arrow.triangle.2.circlepath"
+            case .failed: "xmark.octagon.fill"
+            }
+        }
+    }
+
+    private let card = CardView()
+    private let icon = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let detailLabel = NSTextField(wrappingLabelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        detailLabel.font = Theme.Text.rowDetail
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.maximumNumberOfLines = 3
+        icon.imageScaling = .scaleProportionallyDown
+
+        let labels = NSStackView(views: [titleLabel, detailLabel])
+        labels.orientation = .vertical
+        labels.alignment = .leading
+        labels.spacing = 2
+
+        let row = NSStackView(views: [icon, labels])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+
+        card.translatesAutoresizingMaskIntoConstraints = false
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(card)
+        card.addSubview(row)
+
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: trailingAnchor),
+            card.topAnchor.constraint(equalTo: topAnchor),
+            card.bottomAnchor.constraint(equalTo: bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            row.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+            row.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
+            row.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
+            icon.widthAnchor.constraint(equalToConstant: 22),
+            icon.heightAnchor.constraint(equalToConstant: 22),
+            labels.widthAnchor.constraint(
+                equalTo: row.widthAnchor,
+                constant: -32
+            ),
+        ])
+        update(state: .needsSetup, message: "Checking integration…")
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func update(state: State, message: String, detail: String? = nil) {
+        titleLabel.stringValue = message
+        titleLabel.textColor = state.tint
+        detailLabel.stringValue = detail ?? ""
+        detailLabel.isHidden = (detail ?? "").isEmpty
+        icon.image = Theme.symbolImage(
+            state.symbol,
+            pointSize: 18,
+            weight: .semibold,
+            accessibilityDescription: message
+        )
+        icon.contentTintColor = state.tint
+    }
+}
+
 @MainActor
 private final class CallbackSwitch: NSSwitch {
     private let onChange: (Bool) -> Void
@@ -1358,85 +1669,5 @@ private final class CallbackSwitch: NSSwitch {
 
     @objc private func changed() {
         onChange(state == .on)
-    }
-}
-
-@MainActor
-private final class CallbackCheckbox: NSButton {
-    private let onChange: (Bool) -> Void
-
-    init(title: String, isOn: Bool, onChange: @escaping (Bool) -> Void) {
-        self.onChange = onChange
-        super.init(frame: .zero)
-        self.title = title
-        setButtonType(.switch)
-        state = isOn ? .on : .off
-        font = .systemFont(ofSize: 11)
-        target = self
-        action = #selector(changed)
-    }
-
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    @objc private func changed() {
-        onChange(state == .on)
-    }
-}
-
-@MainActor
-private final class SettingsActionButton: NSButton {
-    enum Style {
-        case secondary
-        case primary
-        case destructive
-    }
-
-    private let onPress: () -> Void
-    private let style: Style
-
-    init(
-        title: String,
-        style: Style = .secondary,
-        onPress: @escaping () -> Void
-    ) {
-        self.onPress = onPress
-        self.style = style
-        super.init(frame: .zero)
-        self.title = title
-        isBordered = false
-        wantsLayer = true
-        layer?.cornerRadius = 15
-        layer?.cornerCurve = .continuous
-        font = .systemFont(ofSize: 12, weight: .medium)
-        alignment = .center
-        target = self
-        action = #selector(pressed)
-        heightAnchor.constraint(equalToConstant: 30).isActive = true
-    }
-
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    override func updateLayer() {
-        super.updateLayer()
-        switch style {
-        case .secondary:
-            layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
-            contentTintColor = .labelColor
-        case .primary:
-            layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-            contentTintColor = .white
-        case .destructive:
-            layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.13).cgColor
-            contentTintColor = .systemRed
-        }
-        layer?.opacity = isEnabled ? 1 : 0.45
-    }
-
-    @objc private func pressed() {
-        onPress()
     }
 }
