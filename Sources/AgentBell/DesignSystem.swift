@@ -544,6 +544,28 @@ final class CardView: NSView {
     }
 }
 
+/// Faintly filled rounded tile that holds a provider or app icon.
+@MainActor
+final class TintedTileView: NSView {
+    init(radius: CGFloat = Theme.Metrics.tileRadius) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = radius
+        layer?.cornerCurve = .continuous
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        super.updateLayer()
+        layer?.backgroundColor = Theme.Palette.tile.cgColor
+    }
+}
+
 @MainActor
 final class SeparatorView: NSView {
     override var wantsUpdateLayer: Bool { true }

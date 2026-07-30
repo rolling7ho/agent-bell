@@ -17,23 +17,25 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
     private var maximumPreviewCharacters = 50
     private let tableView = NSTableView()
     private let detailLabel = NSTextField(wrappingLabelWithString: "")
-    private let clearButton = RoundedRectButton(title: "Clear")
-    private let settingsButton = RoundedRectButton(
+    private let attentionBadge = AttentionBadge()
+    private let clearButton = IconButton(
+        symbol: "trash",
+        accessibilityDescription: "Clear all activity",
+        tint: .destructive
+    )
+    private let settingsButton = IconButton(
         symbol: "gearshape",
         accessibilityDescription: "Settings"
     )
-    private let quitButton = RoundedRectButton(
-        title: "Quit",
-        emphasis: .destructive
-    )
+    private let quitButton = PillButton(title: "Quit", style: .destructive)
     private let versionLabel = NSTextField(labelWithString: "")
-    private let emptyLabel = NSTextField(labelWithString: "No agent activity yet")
+    private let emptyStateView = EmptyStateView()
     private var detailClearTask: Task<Void, Never>?
     private var clearAllTask: Task<Void, Never>?
     private var isBusy = false
 
     override func loadView() {
-        view = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: 480))
+        view = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: 500))
         buildInterface()
     }
 
@@ -61,7 +63,11 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         self.includesPrivateDetails = includesPrivateDetails
         self.maximumPreviewCharacters = maximumPreviewCharacters
         tableView.reloadData()
-        emptyLabel.isHidden = !self.sessions.isEmpty
+        emptyStateView.isHidden = !self.sessions.isEmpty
+        clearButton.isEnabled = !isBusy && !self.sessions.isEmpty
+        attentionBadge.update(
+            count: self.sessions.filter { $0.state == .attention }.count
+        )
 
         if !preserveMessage && !isBusy {
             hideDetailMessage()
@@ -76,7 +82,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         detailClearTask?.cancel()
         detailClearTask = nil
         isBusy = busy
-        clearButton.isEnabled = !busy
+        clearButton.isEnabled = !busy && !sessions.isEmpty
         settingsButton.isEnabled = !busy
         detailLabel.stringValue = message
         detailLabel.isHidden = message.isEmpty
@@ -96,7 +102,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
     }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        78
+        80
     }
 
     func tableView(
@@ -112,7 +118,17 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
             includesPrivateDetails: includesPrivateDetails,
             maximumPreviewCharacters: maximumPreviewCharacters
         )
+        cell.onClear = { [weak self] in
+            self?.clearSession(session, animatedIn: cell)
+        }
         return cell
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        rowViewForRow row: Int
+    ) -> NSTableRowView? {
+        PlainRowView()
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
@@ -152,24 +168,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
             style: .destructive,
             title: "Clear"
         ) { [weak self] _, _ in
-            guard let self,
-                  let currentRow = sessions.firstIndex(
-                    where: { $0.sessionKey == session.sessionKey }
-                  )
-            else {
-                return
-            }
-            guard let cell = tableView.view(
-                atColumn: 0,
-                row: currentRow,
-                makeIfNecessary: false
-            ) as? SessionCellView else {
-                onClearSession?(session)
-                return
-            }
-            cell.animateFallingBackward { [weak self] in
-                self?.onClearSession?(session)
-            }
+            self?.clearSession(session)
         }
         action.image = NSImage(
             systemSymbolName: "xmark",
@@ -177,6 +176,33 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         )
         action.backgroundColor = NSColor.systemRed
         return [action]
+    }
+
+    private func clearSession(
+        _ session: SessionSummary,
+        animatedIn providedCell: SessionCellView? = nil
+    ) {
+        let cell = providedCell ?? currentCell(for: session)
+        guard let cell else {
+            onClearSession?(session)
+            return
+        }
+        cell.animateFallingBackward { [weak self] in
+            self?.onClearSession?(session)
+        }
+    }
+
+    private func currentCell(for session: SessionSummary) -> SessionCellView? {
+        guard let row = sessions.firstIndex(
+            where: { $0.sessionKey == session.sessionKey }
+        ) else {
+            return nil
+        }
+        return tableView.view(
+            atColumn: 0,
+            row: row,
+            makeIfNecessary: false
+        ) as? SessionCellView
     }
 
     private func moveSessionDown(_ session: SessionSummary) {
@@ -204,23 +230,25 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
 
     private func buildInterface() {
         let title = NSTextField(labelWithString: "AgentBell")
-        title.font = .systemFont(ofSize: 20, weight: .semibold)
+        title.font = .systemFont(ofSize: 19, weight: .semibold)
 
         let titleSymbol = NSImageView()
-        titleSymbol.image = NSImage(
-            systemSymbolName: "bell.fill",
+        titleSymbol.image = Theme.symbolImage(
+            "bell.fill",
+            pointSize: 16,
+            weight: .semibold,
             accessibilityDescription: "AgentBell"
-        )?.withSymbolConfiguration(
-            NSImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
         )
         titleSymbol.contentTintColor = .controlAccentColor
 
         detailLabel.font = .systemFont(ofSize: 11)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.maximumNumberOfLines = 3
+        detailLabel.isHidden = true
 
         clearButton.target = self
         clearButton.action = #selector(clearPressed)
+        clearButton.isEnabled = false
 
         settingsButton.target = self
         settingsButton.action = #selector(settingsPressed)
@@ -229,12 +257,12 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         quitButton.action = #selector(quitPressed)
 
         let headerButtons = NSStackView(
-            views: [settingsButton, clearButton]
+            views: [clearButton, settingsButton]
         )
         headerButtons.orientation = .horizontal
-        headerButtons.spacing = 8
+        headerButtons.spacing = 6
 
-        let heading = NSStackView(views: [titleSymbol, title])
+        let heading = NSStackView(views: [titleSymbol, title, attentionBadge])
         heading.orientation = .horizontal
         heading.alignment = .centerY
         heading.spacing = 7
@@ -248,12 +276,15 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         header.alignment = .leading
         header.spacing = 3
 
+        let headerSeparator = SeparatorView()
+
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("session"))
         column.resizingMask = .autoresizingMask
         tableView.addTableColumn(column)
         tableView.headerView = nil
-        tableView.rowSizeStyle = .medium
+        tableView.rowSizeStyle = .custom
         tableView.selectionHighlightStyle = .regular
+        tableView.style = .plain
         tableView.intercellSpacing = NSSize(width: 0, height: 2)
         tableView.backgroundColor = .clear
         tableView.delegate = self
@@ -262,11 +293,16 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         let scrollView = NSScrollView()
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
-
-        emptyLabel.textColor = .tertiaryLabelColor
-        emptyLabel.alignment = .center
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets(
+            top: 6,
+            left: 0,
+            bottom: 6,
+            right: 0
+        )
 
         let version = Bundle.main.object(
             forInfoDictionaryKey: "CFBundleShortVersionString"
@@ -278,11 +314,19 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         versionLabel.font = .systemFont(ofSize: 9.5)
         versionLabel.textColor = .tertiaryLabelColor
 
+        let footerSeparator = SeparatorView()
         let footer = NSStackView(views: [versionLabel, NSView(), quitButton])
         footer.orientation = .horizontal
-        footer.alignment = .bottom
+        footer.alignment = .centerY
 
-        [header, scrollView, emptyLabel, footer].forEach {
+        [
+            header,
+            headerSeparator,
+            scrollView,
+            emptyStateView,
+            footerSeparator,
+            footer,
+        ].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
         }
@@ -293,17 +337,40 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
             header.topAnchor.constraint(equalTo: view.topAnchor, constant: 14),
             headerTop.widthAnchor.constraint(equalTo: header.widthAnchor),
 
+            headerSeparator.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            headerSeparator.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            headerSeparator.topAnchor.constraint(
+                equalTo: header.bottomAnchor,
+                constant: 10
+            ),
+            headerSeparator.heightAnchor.constraint(
+                equalToConstant: Theme.Metrics.hairline
+            ),
+
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
-            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 10),
-            scrollView.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -8),
+            scrollView.topAnchor.constraint(equalTo: headerSeparator.bottomAnchor),
+            scrollView.bottomAnchor.constraint(
+                equalTo: footerSeparator.topAnchor
+            ),
 
-            emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
+            emptyStateView.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
+            emptyStateView.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
+            emptyStateView.widthAnchor.constraint(equalToConstant: 260),
 
-            footer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
-            footer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            footer.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -10),
+            footerSeparator.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            footerSeparator.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            footerSeparator.bottomAnchor.constraint(
+                equalTo: footer.topAnchor,
+                constant: -8
+            ),
+            footerSeparator.heightAnchor.constraint(
+                equalToConstant: Theme.Metrics.hairline
+            ),
+
+            footer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
+            footer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
+            footer.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
             footer.heightAnchor.constraint(equalToConstant: 30),
             titleSymbol.widthAnchor.constraint(equalToConstant: 20),
             titleSymbol.heightAnchor.constraint(equalToConstant: 20),
@@ -332,7 +399,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         clearAllTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 420_000_000)
             guard !Task.isCancelled, let self else { return }
-            clearButton.isEnabled = !isBusy
+            clearButton.isEnabled = !isBusy && !sessions.isEmpty
             clearAllTask = nil
             onClearHistory?(snapshots)
         }
@@ -354,14 +421,211 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
     }
 }
 
+/// Header badge that makes the "attention first" ordering visible at a glance.
+@MainActor
+private final class AttentionBadge: NSView {
+    private let label = NSTextField(labelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.cornerCurve = .continuous
+        isHidden = true
+
+        label.font = .systemFont(ofSize: 10, weight: .semibold)
+        label.textColor = .systemOrange
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 16),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    func update(count: Int) {
+        isHidden = count == 0
+        guard count > 0 else { return }
+        let text = count == 1
+            ? "1 needs you"
+            : "\(count) need you"
+        label.stringValue = text
+        setAccessibilityLabel(text)
+        needsDisplay = true
+    }
+
+    override func updateLayer() {
+        super.updateLayer()
+        layer?.backgroundColor = NSColor.systemOrange
+            .withAlphaComponent(0.14)
+            .cgColor
+    }
+}
+
+@MainActor
+private final class EmptyStateView: NSView {
+    init() {
+        super.init(frame: .zero)
+        let icon = NSImageView()
+        icon.image = Theme.symbolImage(
+            "bell.slash",
+            pointSize: 26,
+            weight: .regular,
+            accessibilityDescription: nil
+        )
+        icon.contentTintColor = .tertiaryLabelColor
+        icon.imageScaling = .scaleProportionallyDown
+
+        let title = NSTextField(labelWithString: "No agent activity yet")
+        title.font = .systemFont(ofSize: 13, weight: .medium)
+        title.textColor = .secondaryLabelColor
+        title.alignment = .center
+
+        let hint = NSTextField(
+            wrappingLabelWithString:
+                "Runs from Codex, Claude Code, and the desktop apps show up here as soon as they need you."
+        )
+        hint.font = .systemFont(ofSize: 11)
+        hint.textColor = .tertiaryLabelColor
+        hint.alignment = .center
+        hint.maximumNumberOfLines = 3
+
+        let stack = NSStackView(views: [icon, title, hint])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+}
+
+/// Card background for one dashboard row. Colors are assigned in `updateLayer`
+/// so AppKit resolves them against the correct effective appearance.
+@MainActor
+private final class SessionCardView: NSView {
+    var state: AgentState = .working {
+        didSet { needsDisplay = true }
+    }
+
+    var isHovered = false {
+        didSet { needsDisplay = true }
+    }
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = Theme.Metrics.cardRadius
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = false
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowRadius = 5
+        layer?.shadowOffset = CGSize(width: 0, height: -1)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        super.updateLayer()
+        guard let layer else { return }
+        var background = Theme.Palette.card
+        if state == .attention {
+            background = background.blended(
+                withFraction: 0.06,
+                of: .systemOrange
+            ) ?? background
+        }
+        if isHovered {
+            background = background.blended(
+                withFraction: 0.07,
+                of: .labelColor
+            ) ?? background
+        }
+        layer.backgroundColor = background.cgColor
+        layer.shadowOpacity = isHovered ? 0.13 : 0
+    }
+}
+
+/// Thin state-colored bar marking rows that are waiting on the user.
+@MainActor
+private final class AccentBarView: NSView {
+    var tint: NSColor = .systemOrange {
+        didSet { needsDisplay = true }
+    }
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = Theme.Metrics.accentBarWidth / 2
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        super.updateLayer()
+        layer?.backgroundColor = tint.cgColor
+    }
+}
+
+/// Table row view that never paints a selection fill: rows act as buttons and
+/// the blue flash read as a stuck selection.
+@MainActor
+private final class PlainRowView: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {}
+
+    override var isEmphasized: Bool {
+        get { false }
+        set {}
+    }
+}
+
 @MainActor
 private final class SessionCellView: NSTableCellView {
-    private let cardView = NSView()
+    var onClear: (() -> Void)?
+
+    private let cardView = SessionCardView()
+    private let accentBar = AccentBarView()
+    private let iconTile = TintedTileView()
     private let providerIcon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let previewLabel = NSTextField(labelWithString: "")
-    private let statusLabel = NSTextField(labelWithString: "")
-    private let timeLabel = NSTextField(labelWithString: "")
+    private let metaLabel = NSTextField(labelWithString: "")
+    private let statePill = StatePill()
+    private let clearButton = IconButton(
+        symbol: "xmark",
+        accessibilityDescription: "Clear this item",
+        pointSize: 9,
+        size: 20
+    )
+    private var hoverTrackingArea: NSTrackingArea?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -372,9 +636,31 @@ private final class SessionCellView: NSTableCellView {
         nil
     }
 
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        cardView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        clearButton.isHidden = false
+        cardView.isHovered = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        clearButton.isHidden = true
+        cardView.isHovered = false
     }
 
     func configure(
@@ -385,11 +671,10 @@ private final class SessionCellView: NSTableCellView {
         providerIcon.image = session.testDisplayName == "AgentBell"
             ? NSApplication.shared.applicationIconImage
             : ProviderIcon.image(for: session.provider)
-        let displayedTitle = session.dashboardTitle(
+        let headline = session.dashboardHeadline(
             includesPrivateDetails: includesPrivateDetails
         )
-        titleLabel.stringValue = displayedTitle
-        titleLabel.toolTip = displayedTitle
+        titleLabel.stringValue = headline
         previewLabel.stringValue = session.dashboardPreview(
             includesPrivateDetails: includesPrivateDetails,
             maximumCharacters: maximumPreviewCharacters
@@ -397,70 +682,117 @@ private final class SessionCellView: NSTableCellView {
         previewLabel.textColor = includesPrivateDetails || session.isTest
             ? .secondaryLabelColor
             : .tertiaryLabelColor
-        statusLabel.stringValue = session.state.displayName
-        statusLabel.textColor = color(for: session.state)
-        timeLabel.stringValue = RelativeDateTimeFormatter().localizedString(
-            for: session.updatedAt,
-            relativeTo: Date()
+        statePill.configure(state: session.state)
+
+        var metadata = [Theme.relativeTime(for: session.updatedAt)]
+        metadata.append(
+            contentsOf: session.dashboardMetadata(
+                includesPrivateDetails: includesPrivateDetails
+            )
         )
+        metaLabel.stringValue = metadata.joined(separator: " · ")
+
+        accentBar.isHidden = session.state != .attention
+        accentBar.tint = Theme.color(for: session.state)
+        cardView.state = session.state
+        let accessibleSummary = [
+            headline,
+            session.state.displayName,
+            previewLabel.stringValue,
+        ].joined(separator: ", ")
+        toolTip = accessibleSummary
+        setAccessibilityLabel(accessibleSummary)
     }
 
     private func build() {
         providerIcon.imageScaling = .scaleProportionallyUpOrDown
 
-        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        titleLabel.font = Theme.Text.cardTitle
         titleLabel.lineBreakMode = .byTruncatingTail
-        previewLabel.font = .systemFont(ofSize: 10.5)
+        previewLabel.font = Theme.Text.cardPreview
         previewLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.font = .systemFont(ofSize: 11, weight: .medium)
-        timeLabel.font = .systemFont(ofSize: 10)
-        timeLabel.textColor = .tertiaryLabelColor
-        timeLabel.alignment = .right
+        metaLabel.font = Theme.Text.cardMeta
+        metaLabel.textColor = .tertiaryLabelColor
+        metaLabel.lineBreakMode = .byTruncatingTail
 
-        let detail = NSStackView(views: [statusLabel, timeLabel])
-        detail.orientation = .horizontal
-        detail.spacing = 8
-
-        let labels = NSStackView(views: [titleLabel, previewLabel, detail])
+        let labels = NSStackView(views: [titleLabel, previewLabel, metaLabel])
         labels.orientation = .vertical
         labels.alignment = .leading
-        labels.spacing = 2
+        labels.spacing = 1
 
-        let row = NSStackView(views: [providerIcon, labels])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 10
-        cardView.wantsLayer = true
-        cardView.layer?.cornerRadius = 14
-        cardView.layer?.cornerCurve = .continuous
-        cardView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        cardView.translatesAutoresizingMaskIntoConstraints = false
-        row.translatesAutoresizingMaskIntoConstraints = false
+        accentBar.isHidden = true
+        clearButton.isHidden = true
+        clearButton.target = self
+        clearButton.action = #selector(clearPressed)
+
+        [cardView, accentBar, iconTile, providerIcon, labels, statePill, clearButton]
+            .forEach { $0.translatesAutoresizingMaskIntoConstraints = false }
+
         addSubview(cardView)
-        cardView.addSubview(row)
+        cardView.addSubview(accentBar)
+        cardView.addSubview(iconTile)
+        iconTile.addSubview(providerIcon)
+        cardView.addSubview(labels)
+        cardView.addSubview(statePill)
+        cardView.addSubview(clearButton)
 
         NSLayoutConstraint.activate([
             cardView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             cardView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             cardView.topAnchor.constraint(equalTo: topAnchor, constant: 3),
             cardView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
-            row.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 12),
-            row.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -12),
-            row.centerYAnchor.constraint(equalTo: cardView.centerYAnchor),
-            providerIcon.widthAnchor.constraint(equalToConstant: 24),
-            providerIcon.heightAnchor.constraint(equalToConstant: 24),
-            detail.widthAnchor.constraint(equalTo: labels.widthAnchor),
+
+            accentBar.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
+            accentBar.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 12),
+            accentBar.bottomAnchor.constraint(
+                equalTo: cardView.bottomAnchor,
+                constant: -12
+            ),
+            accentBar.widthAnchor.constraint(
+                equalToConstant: Theme.Metrics.accentBarWidth
+            ),
+
+            iconTile.leadingAnchor.constraint(
+                equalTo: cardView.leadingAnchor,
+                constant: 12
+            ),
+            iconTile.centerYAnchor.constraint(equalTo: cardView.centerYAnchor),
+            iconTile.widthAnchor.constraint(equalToConstant: 30),
+            iconTile.heightAnchor.constraint(equalToConstant: 30),
+            providerIcon.centerXAnchor.constraint(equalTo: iconTile.centerXAnchor),
+            providerIcon.centerYAnchor.constraint(equalTo: iconTile.centerYAnchor),
+            providerIcon.widthAnchor.constraint(equalToConstant: 19),
+            providerIcon.heightAnchor.constraint(equalToConstant: 19),
+
+            labels.leadingAnchor.constraint(
+                equalTo: iconTile.trailingAnchor,
+                constant: 10
+            ),
+            labels.centerYAnchor.constraint(equalTo: cardView.centerYAnchor),
+            labels.trailingAnchor.constraint(
+                lessThanOrEqualTo: statePill.leadingAnchor,
+                constant: -8
+            ),
+
+            statePill.trailingAnchor.constraint(
+                equalTo: cardView.trailingAnchor,
+                constant: -12
+            ),
+            statePill.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 12),
+
+            clearButton.trailingAnchor.constraint(
+                equalTo: cardView.trailingAnchor,
+                constant: -12
+            ),
+            clearButton.bottomAnchor.constraint(
+                equalTo: cardView.bottomAnchor,
+                constant: -11
+            ),
         ])
     }
 
-    private func color(for state: AgentState) -> NSColor {
-        switch state {
-        case .attention: .systemOrange
-        case .finished: .systemGreen
-        case .failed: .systemRed
-        case .working, .started: .systemBlue
-        case .ended: .secondaryLabelColor
-        }
+    @objc private func clearPressed() {
+        onClear?()
     }
 
     func animateFallingBackward(completion: @escaping () -> Void) {
@@ -500,79 +832,6 @@ private final class SessionCellView: NSTableCellView {
         CATransaction.setCompletionBlock(completion)
         layer.add(group, forKey: "agentbell-fall-back")
         CATransaction.commit()
-    }
-}
-
-@MainActor
-private final class RoundedRectButton: NSButton {
-    enum Emphasis {
-        case secondary
-        case primary
-        case destructive
-    }
-
-    private let emphasis: Emphasis
-
-    init(title: String, emphasis: Emphasis = .secondary) {
-        self.emphasis = emphasis
-        super.init(frame: .zero)
-        self.title = title
-        configure()
-    }
-
-    init(symbol: String, accessibilityDescription: String) {
-        emphasis = .secondary
-        super.init(frame: .zero)
-        title = ""
-        image = NSImage(
-            systemSymbolName: symbol,
-            accessibilityDescription: accessibilityDescription
-        )?.withSymbolConfiguration(
-            NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
-        )
-        imagePosition = .imageOnly
-        imageScaling = .scaleProportionallyDown
-        alignment = .center
-        toolTip = accessibilityDescription
-        configure()
-        widthAnchor.constraint(equalToConstant: 30).isActive = true
-    }
-
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    override var intrinsicContentSize: NSSize {
-        guard !title.isEmpty else { return NSSize(width: 30, height: 30) }
-        return NSSize(
-            width: super.intrinsicContentSize.width + 18,
-            height: 30
-        )
-    }
-
-    private func configure() {
-        isBordered = false
-        wantsLayer = true
-        layer?.cornerRadius = 15
-        layer?.cornerCurve = .continuous
-        font = .systemFont(ofSize: 12, weight: .medium)
-        heightAnchor.constraint(equalToConstant: 30).isActive = true
-    }
-
-    override func updateLayer() {
-        super.updateLayer()
-        switch emphasis {
-        case .secondary:
-            layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
-            contentTintColor = .labelColor
-        case .primary:
-            layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-            contentTintColor = .white
-        case .destructive:
-            layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.13).cgColor
-            contentTintColor = .systemRed
-        }
-        layer?.opacity = isEnabled ? 1 : 0.45
     }
 }
 
