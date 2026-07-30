@@ -56,7 +56,7 @@ public final class SessionStore: @unchecked Sendable {
         }
 
         if let existing = sessionsByKey[event.sessionKey],
-           !shouldApply(event, to: existing)
+           !SessionTransitionPolicy.shouldApply(event, to: existing)
         {
             saveLocked()
             return (existing, false, false)
@@ -74,7 +74,10 @@ public final class SessionStore: @unchecked Sendable {
         } else {
             summary = SessionSummary(event: event)
             if summary.runStartedAt == nil,
-               let inheritedStart = inheritedRunStartLocked(for: event)
+               let inheritedStart = SessionTransitionPolicy.inheritedRunStart(
+                   for: event,
+                   sessions: sessionsByKey.values
+               )
             {
                 summary.runStartedAt = inheritedStart
             }
@@ -187,10 +190,10 @@ public final class SessionStore: @unchecked Sendable {
 
     private func trimLocked() {
         let sorted = sessionsByKey.values.sorted { $0.updatedAt > $1.updatedAt }
-        let active = sorted.filter(\.isActiveForRetention)
+        let active = sorted.filter(SessionTransitionPolicy.isActive)
         let inactiveLimit = max(0, Self.maximumSessions - active.count)
         let retained = active + sorted
-            .filter { !$0.isActiveForRetention }
+            .filter { !SessionTransitionPolicy.isActive($0) }
             .prefix(inactiveLimit)
         sessionsByKey = Dictionary(
             uniqueKeysWithValues: retained.map { ($0.sessionKey, $0) }
@@ -205,66 +208,6 @@ public final class SessionStore: @unchecked Sendable {
                 .prefix(Self.maximumDedupeKeys)
                 .map { ($0.key, $0.value) }
         )
-    }
-
-    private func shouldApply(
-        _ event: AgentEvent,
-        to existing: SessionSummary
-    ) -> Bool {
-        let turnsConflict = event.turnID != nil
-            && existing.turnID != nil
-            && event.turnID != existing.turnID
-
-        switch event.hookEventName {
-        case "SessionStart":
-            return !existing.isActiveForRetention
-        case "UserPromptSubmit":
-            if turnsConflict {
-                return true
-            }
-            return existing.state != .ended
-                || event.timestamp > existing.updatedAt
-        case "Notification" where event.state == .finished:
-            guard existing.state != .ended else { return false }
-            return !turnsConflict
-        case "PermissionRequest", "PreToolUse", "Notification":
-            guard existing.isActiveForRetention else { return false }
-            return !turnsConflict
-        case "Stop", "StopFailure":
-            guard existing.state != .ended else { return false }
-            return !turnsConflict
-        case "SessionEnd":
-            guard !turnsConflict else { return false }
-            if event.turnID == nil && event.timestamp < existing.updatedAt {
-                return false
-            }
-            return true
-        default:
-            return event.timestamp >= existing.updatedAt
-        }
-    }
-
-    private func inheritedRunStartLocked(for event: AgentEvent) -> Date? {
-        guard event.state == .finished || event.state == .failed,
-              let process = event.origin.agentProcess
-        else {
-            return nil
-        }
-        return sessionsByKey.values
-            .filter { summary in
-                guard summary.provider == event.provider,
-                      summary.isActiveForRetention,
-                      let candidate = summary.origin.agentProcess
-                else {
-                    return false
-                }
-                return candidate.pid == process.pid
-                    && candidate.startIdentifier == process.startIdentifier
-                    && summary.updatedAt <= event.timestamp
-            }
-            .sorted { $0.updatedAt > $1.updatedAt }
-            .first?
-            .runStartedAt
     }
 
     private func load() {
@@ -297,7 +240,7 @@ public final class SessionStore: @unchecked Sendable {
         }
         sessionsByKey = [:]
         for summary in summaries {
-            guard let validated = validatedLoadedSummary(summary) else {
+            guard let validated = LoadedSessionSanitizer.sanitize(summary) else {
                 continue
             }
             if let existing = sessionsByKey[validated.sessionKey],
@@ -309,151 +252,6 @@ public final class SessionStore: @unchecked Sendable {
         }
         trimLocked()
         trimDedupeKeysLocked()
-    }
-
-    private func validatedLoadedSummary(
-        _ value: SessionSummary
-    ) -> SessionSummary? {
-        guard AgentBellValidation.isValidSessionID(value.sessionID),
-              value.sessionKey
-                == "\(value.provider.rawValue):\(value.sessionID)",
-              let cwd = AgentBellValidation.normalizedAbsolutePath(value.cwd),
-              value.updatedAt.timeIntervalSinceReferenceDate.isFinite
-        else {
-            return nil
-        }
-        var summary = value
-        if let runStartedAt = value.runStartedAt,
-           runStartedAt.timeIntervalSinceReferenceDate.isFinite,
-           ![AgentState.finished, .failed, .ended].contains(value.state)
-                || runStartedAt < value.updatedAt
-        {
-            summary.runStartedAt = runStartedAt
-        } else {
-            summary.runStartedAt = nil
-        }
-        if let observedActivityAt = value.observedActivityAt,
-           observedActivityAt.timeIntervalSinceReferenceDate.isFinite
-        {
-            summary.observedActivityAt = observedActivityAt
-        } else if value.isTest
-                    || value.displayTitle != nil
-                    || value.contentPreview != nil
-                    || !["SessionStart", "SessionEnd"].contains(
-                        value.lastHookEventName ?? ""
-                    )
-        {
-            summary.observedActivityAt = value.updatedAt
-        } else {
-            summary.observedActivityAt = nil
-        }
-        summary.cwd = cwd
-        summary.projectName = AgentBellSafeText.collapsed(
-            value.projectName,
-            maximumCharacters: 100
-        )
-        if summary.projectName.isEmpty {
-            summary.projectName = AgentBellValidation.projectName(for: cwd)
-        }
-        summary.displayTitle = value.displayTitle.flatMap {
-            let safe = AgentBellSafeText.collapsed(
-                $0,
-                maximumCharacters: 81,
-                appendEllipsisWhenTruncated: true
-            )
-            return safe.isEmpty ? nil : safe
-        }
-        summary.contentPreview = value.contentPreview.flatMap {
-            let safe = AgentBellSafeText.collapsed(
-                $0,
-                maximumCharacters: 120,
-                appendEllipsisWhenTruncated: true
-            )
-            return safe.isEmpty ? nil : safe
-        }
-        summary.testDisplayName = value.testDisplayName.flatMap {
-            let safe = AgentBellSafeText.collapsed(
-                $0,
-                maximumCharacters: 100
-            )
-            return safe.isEmpty ? nil : safe
-        }
-        summary.turnID = value.turnID.flatMap {
-            AgentBellValidation.isValidOptionalIdentifier($0) ? $0 : nil
-        }
-        summary.lastHookEventName = value.lastHookEventName.flatMap {
-            let safe = AgentBellSafeText.collapsed(
-                $0,
-                maximumCharacters: 100
-            )
-            return safe.isEmpty ? nil : safe
-        }
-        summary.origin = sanitizedLoadedOrigin(value.origin)
-        return summary
-    }
-
-    private func sanitizedLoadedOrigin(
-        _ value: OriginMetadata
-    ) -> OriginMetadata {
-        OriginMetadata(
-            agentProcess: sanitizedLoadedProcess(value.agentProcess),
-            shellProcess: sanitizedLoadedProcess(value.shellProcess),
-            hostProcess: sanitizedLoadedProcess(value.hostProcess),
-            hostBundleIdentifier: safeOpaque(value.hostBundleIdentifier),
-            executablePath: value.executablePath.flatMap(
-                AgentBellValidation.normalizedAbsolutePath
-            ),
-            termProgram: safeOpaque(value.termProgram),
-            cmuxWindowID: safeOpaque(value.cmuxWindowID),
-            cmuxWorkspaceID: safeOpaque(value.cmuxWorkspaceID),
-            cmuxPaneID: safeOpaque(value.cmuxPaneID),
-            cmuxSurfaceID: safeOpaque(value.cmuxSurfaceID),
-            ghosttyTerminalID: safeOpaque(value.ghosttyTerminalID)
-        )
-    }
-
-    private func sanitizedLoadedProcess(
-        _ value: ProcessRecord?
-    ) -> ProcessRecord? {
-        guard let value,
-              value.pid > 1,
-              value.parentPID >= 0,
-              !value.startIdentifier.isEmpty,
-              value.startIdentifier.utf8.count <= 128,
-              !value.command.isEmpty,
-              value.command.utf8.count <= 4_096
-        else {
-            return nil
-        }
-        return ProcessRecord(
-            pid: value.pid,
-            parentPID: value.parentPID,
-            tty: safeOpaque(value.tty, maximumBytes: 128),
-            startIdentifier: AgentBellSafeText.collapsed(
-                value.startIdentifier,
-                maximumCharacters: 128
-            ),
-            command: AgentBellSafeText.collapsed(
-                value.command,
-                maximumCharacters: 4_096
-            )
-        )
-    }
-
-    private func safeOpaque(
-        _ value: String?,
-        maximumBytes: Int = 256
-    ) -> String? {
-        guard let value,
-              !value.isEmpty,
-              value.utf8.count <= maximumBytes,
-              value.allSatisfy({
-                  $0.isLetter || $0.isNumber || "._:/-".contains($0)
-              })
-        else {
-            return nil
-        }
-        return value
     }
 
     private func quarantineCorruptStateLocked() {
@@ -493,17 +291,6 @@ public final class SessionStore: @unchecked Sendable {
             )
         } catch {
             // Session history is best-effort; hooks and agent work must never be affected.
-        }
-    }
-}
-
-private extension SessionSummary {
-    var isActiveForRetention: Bool {
-        switch state {
-        case .started, .working, .attention:
-            true
-        case .finished, .failed, .ended:
-            false
         }
     }
 }

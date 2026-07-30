@@ -798,6 +798,106 @@ final class SessionStoreTests: XCTestCase {
         )
     }
 
+    func testPersistedSummariesWithInvalidIdentityOrPathAreRejected() throws {
+        let stateURL = temporaryDirectory().appendingPathComponent("sessions.json")
+        var valid = SessionSummary(
+            event: event(
+                state: .working,
+                eventName: "UserPromptSubmit",
+                turnID: "turn-valid"
+            )
+        )
+        valid.sessionID = "valid-session"
+        valid.sessionKey = "claude:valid-session"
+
+        var invalidID = valid
+        invalidID.sessionID = "invalid session"
+        invalidID.sessionKey = "claude:invalid session"
+
+        var mismatchedKey = valid
+        mismatchedKey.sessionID = "mismatched-session"
+
+        var relativePath = valid
+        relativePath.sessionID = "relative-path-session"
+        relativePath.sessionKey = "claude:relative-path-session"
+        relativePath.cwd = "relative/project"
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode([
+            invalidID,
+            mismatchedKey,
+            relativePath,
+            valid,
+        ]).write(to: stateURL)
+
+        let restored = SessionStore(stateURL: stateURL)
+
+        XCTAssertEqual(restored.allSessions().map(\.sessionKey), [valid.sessionKey])
+    }
+
+    func testPersistedSummaryFieldsAreSanitizedBeforeRestoration() throws {
+        let stateURL = temporaryDirectory().appendingPathComponent("sessions.json")
+        var summary = SessionSummary(
+            event: event(
+                state: .working,
+                eventName: "UserPromptSubmit",
+                turnID: "turn-valid"
+            )
+        )
+        summary.projectName = "  Project\nName  "
+        summary.displayTitle = String(repeating: "T", count: 90)
+        summary.contentPreview = String(repeating: "🙂", count: 130)
+        summary.testDisplayName = "  AgentBell\nTest  "
+        summary.turnID = "invalid turn"
+        summary.lastHookEventName = "  Stop\nFailure  "
+        summary.origin = OriginMetadata(
+            agentProcess: ProcessRecord(
+                pid: 1,
+                parentPID: 0,
+                tty: nil,
+                startIdentifier: "invalid",
+                command: "claude"
+            ),
+            shellProcess: ProcessRecord(
+                pid: 222,
+                parentPID: 0,
+                tty: "ttys001",
+                startIdentifier: "  shell\nbirth  ",
+                command: "  /bin/zsh\n"
+            ),
+            hostBundleIdentifier: "com.microsoft.VSCode;unsafe",
+            executablePath: "relative/claude",
+            termProgram: "unsafe value",
+            cmuxWindowID: "window:1"
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode([summary]).write(to: stateURL)
+
+        let restored = try XCTUnwrap(
+            SessionStore(stateURL: stateURL)
+                .session(provider: .claude, sessionID: summary.sessionID)
+        )
+
+        XCTAssertEqual(restored.projectName, "Project Name")
+        XCTAssertEqual(restored.displayTitle?.count, 81)
+        XCTAssertEqual(restored.displayTitle?.last, "…")
+        XCTAssertEqual(restored.contentPreview?.count, 120)
+        XCTAssertEqual(restored.contentPreview?.last, "…")
+        XCTAssertEqual(restored.testDisplayName, "AgentBell Test")
+        XCTAssertNil(restored.turnID)
+        XCTAssertEqual(restored.lastHookEventName, "Stop Failure")
+        XCTAssertNil(restored.origin.agentProcess)
+        XCTAssertEqual(restored.origin.shellProcess?.startIdentifier, "shell birth")
+        XCTAssertEqual(restored.origin.shellProcess?.command, "/bin/zsh")
+        XCTAssertNil(restored.origin.hostBundleIdentifier)
+        XCTAssertNil(restored.origin.executablePath)
+        XCTAssertNil(restored.origin.termProgram)
+        XCTAssertEqual(restored.origin.cmuxWindowID, "window:1")
+    }
+
     func testCorruptPersistedStateIsQuarantinedWithoutBreakingStartup() throws {
         let directory = temporaryDirectory()
         let stateURL = directory.appendingPathComponent("sessions.json")
