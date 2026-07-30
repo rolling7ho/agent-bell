@@ -1,0 +1,18 @@
+# Swift Package Manager
+/.build/
+/.swiftpm/
+
+# Local build and packaging outputs
+/outputs/
+/work/
+*.app
+*.dSYM
+*.dmg
+*.vsix
+*.xcarchive
+
+# Local AgentBell runtime data
+/.remember/
+
+# macOS metadata
+.DS_Store

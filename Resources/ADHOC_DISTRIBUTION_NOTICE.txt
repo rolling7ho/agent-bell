@@ -1,0 +1,16 @@
+AGENTBELL FREE / AD-HOC BUILD
+
+This copy has a cryptographic integrity seal, but it is not signed or
+notarized by an Apple-trusted Developer ID. macOS cannot confirm who produced
+it, and Gatekeeper may reject it.
+
+Before opening AgentBell:
+
+1. Obtain the AgentBell release public key or its SHA-256 fingerprint through
+   an independent trusted channel.
+2. Verify the detached signature and checksum using verify-download.sh.
+3. Do not disable Gatekeeper globally and do not run copies from unknown
+   mirrors.
+
+An Apple Developer ID build is the only supported way to give macOS a
+platform-trusted third-party publisher identity outside the Mac App Store.

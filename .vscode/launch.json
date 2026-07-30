@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cre}",
+            "name": "Debug AgentBell",
+            "target": "AgentBell",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug AgentBell"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cre}",
+            "name": "Release AgentBell",
+            "target": "AgentBell",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release AgentBell"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cre}",
+            "name": "Debug AgentBellHook",
+            "target": "AgentBellHook",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug AgentBellHook"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cre}",
+            "name": "Release AgentBellHook",
+            "target": "AgentBellHook",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release AgentBellHook"
+        }
+    ]
+}

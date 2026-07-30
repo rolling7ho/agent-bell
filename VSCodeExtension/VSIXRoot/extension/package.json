@@ -1,0 +1,19 @@
+{
+  "name": "focus",
+  "displayName": "AgentBell Focus",
+  "description": "Focuses or safely resumes the exact local agent session selected in AgentBell.",
+  "version": "1.1.0",
+  "publisher": "agentbell",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onUri"
+  ],
+  "main": "./main.js",
+  "contributes": {}
+}
