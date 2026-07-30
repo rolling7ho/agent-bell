@@ -312,6 +312,107 @@ final class ConfigurationInstallerTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: claudeURL), originalClaude)
     }
 
+    func testInstalledHookGroupsKeepExactCurrentSchema() throws {
+        let directory = temporaryDirectory()
+        let hookExecutable = try makeExecutable(in: directory)
+        let installer = ConfigurationInstaller(
+            hookExecutablePath: hookExecutable.path,
+            vscodeVSIXPath: nil
+        )
+        let cases: [
+            (
+                provider: AgentProvider,
+                fileName: String,
+                matchers: [String: String?]
+            )
+        ] = [
+            (
+                .codex,
+                "codex.json",
+                [
+                    "SessionStart": "startup|resume|clear|compact",
+                    "UserPromptSubmit": nil,
+                    "PermissionRequest": nil,
+                    "PreToolUse": "^request_user_input$",
+                    "Stop": nil,
+                    "SessionEnd": nil,
+                ]
+            ),
+            (
+                .claude,
+                "claude.json",
+                [
+                    "SessionStart": "startup|resume|clear|compact",
+                    "UserPromptSubmit": nil,
+                    "PermissionRequest": nil,
+                    "PreToolUse": "^(AskUserQuestion|ExitPlanMode)$",
+                    "Notification":
+                        "idle_prompt|elicitation_dialog|agent_needs_input",
+                    "Stop": nil,
+                    "StopFailure": nil,
+                    "SessionEnd": nil,
+                ]
+            ),
+        ]
+
+        for testCase in cases {
+            let url = directory.appendingPathComponent(testCase.fileName)
+            _ = try installer.mergeHooks(
+                at: url,
+                provider: testCase.provider
+            )
+            let hooks = try XCTUnwrap(
+                try json(at: url)["hooks"] as? [String: Any]
+            )
+            XCTAssertEqual(Set(hooks.keys), Set(testCase.matchers.keys))
+
+            for (eventName, matcher) in testCase.matchers {
+                let groups = try XCTUnwrap(
+                    hooks[eventName] as? [[String: Any]]
+                )
+                XCTAssertEqual(groups.count, 1)
+                let group = try XCTUnwrap(groups.first)
+                XCTAssertEqual(
+                    Set(group.keys),
+                    matcher == nil
+                        ? Set(["hooks"])
+                        : Set(["hooks", "matcher"])
+                )
+                XCTAssertEqual(group["matcher"] as? String, matcher)
+
+                let handlers = try XCTUnwrap(
+                    group["hooks"] as? [[String: Any]]
+                )
+                let handler = try XCTUnwrap(handlers.first)
+                XCTAssertEqual(
+                    Set(handler.keys),
+                    Set([
+                        "type",
+                        "command",
+                        "timeout",
+                        "statusMessage",
+                        "agentbellOwner",
+                    ])
+                )
+                XCTAssertEqual(handler["type"] as? String, "command")
+                XCTAssertEqual(
+                    handler["command"] as? String,
+                    "'\(hookExecutable.path)' --provider "
+                        + testCase.provider.rawValue
+                )
+                XCTAssertEqual(handler["timeout"] as? Int, 2)
+                XCTAssertEqual(
+                    handler["statusMessage"] as? String,
+                    "Updating AgentBell"
+                )
+                XCTAssertEqual(
+                    handler["agentbellOwner"] as? String,
+                    "com.agentbell.app"
+                )
+            }
+        }
+    }
+
     private func makeExecutable(in directory: URL) throws -> URL {
         let url = directory.appendingPathComponent("AgentBellHook")
         try Data("#!/bin/sh\nexit 0\n".utf8).write(to: url)
