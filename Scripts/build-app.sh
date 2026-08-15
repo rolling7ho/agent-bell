@@ -113,6 +113,12 @@ if [[ "${swift_owner}" != "root"
   exit 1
 fi
 /usr/bin/xcrun swift build -c "${configuration}" --arch arm64
+swift_binary_directory=$(
+  /usr/bin/xcrun swift build \
+    -c "${configuration}" \
+    --arch arm64 \
+    --show-bin-path
+)
 
 node_path=""
 for candidate in /usr/local/bin/node /opt/homebrew/bin/node; do
@@ -147,10 +153,10 @@ fi
   "${project_directory}/Resources/Info.plist" \
   "${app_bundle}/Contents/Info.plist"
 /bin/cp \
-  "${build_directory}/arm64-apple-macosx/${configuration}/AgentBell" \
+  "${swift_binary_directory}/AgentBell" \
   "${app_bundle}/Contents/MacOS/AgentBell"
 /bin/cp \
-  "${build_directory}/arm64-apple-macosx/${configuration}/AgentBellHook" \
+  "${swift_binary_directory}/AgentBellHook" \
   "${app_bundle}/Contents/Helpers/AgentBellHook"
 
 /bin/rm -rf "${iconset_directory}"
