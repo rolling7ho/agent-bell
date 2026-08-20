@@ -29,6 +29,7 @@ private enum TurnringReliabilitySmoke {
 
         try verifyInputQueue(in: root)
         try verifyNativeOutbox(in: root)
+        try verifyNativeDeliveryConfirmationPolicy()
         try verifyPhoneOutbox(in: root)
         try verifyCorruptOutboxesFailClosed(in: root)
         try verifyReplayDeliveryIntent(in: root)
@@ -92,6 +93,30 @@ private enum TurnringReliabilitySmoke {
         try require(
             restored.allDeliveries().first?.attemptCount == 100,
             "native intent expired during retries"
+        )
+    }
+
+    private static func verifyNativeDeliveryConfirmationPolicy() throws {
+        try require(
+            NativeNotificationDeliveryPolicy.disposition(
+                isPresentInNotificationCenter: true,
+                isDisplayCaptureActive: false
+            ) == .acknowledge,
+            "confirmed native delivery was not acknowledged"
+        )
+        try require(
+            NativeNotificationDeliveryPolicy.disposition(
+                isPresentInNotificationCenter: false,
+                isDisplayCaptureActive: false
+            ) == .retry,
+            "unretained native delivery was discarded"
+        )
+        try require(
+            NativeNotificationDeliveryPolicy.disposition(
+                isPresentInNotificationCenter: true,
+                isDisplayCaptureActive: true
+            ) == .retry,
+            "capture-muted native delivery was discarded"
         )
     }
 

@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private let ntfyAccessTokenStore = NtfyAccessTokenStore()
     private lazy var ntfyOutbox = NtfyOutbox()
     private lazy var nativeNotificationOutbox = NativeNotificationOutbox()
+    private let displayCaptureMonitor = DisplayCaptureMonitor()
     private lazy var screenLockMonitor: ScreenLockMonitor = {
         let monitor = ScreenLockMonitor()
         monitor.onLock = { [weak self] in
@@ -35,6 +36,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var historyCleanupTimer: Timer?
     private var phoneDeliveryTimer: Timer?
     private var nativeDeliveryTimer: Timer?
+    private var nativeCaptureRetryTask: Task<Void, Never>?
+    private var captureFallbackSoundedDeliveryIDs: Set<String> = []
     private var livenessTracker = SessionLivenessTracker()
     private var isDrainingQueue = false
     private var isDrainingNativeNotificationOutbox = false
@@ -169,6 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         historyCleanupTimer?.invalidate()
         phoneDeliveryTimer?.invalidate()
         nativeDeliveryTimer?.invalidate()
+        nativeCaptureRetryTask?.cancel()
         phoneDeliveryTask?.cancel()
     }
 
@@ -562,9 +566,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
             removedAny = true
             livenessTracker.remove(snapshot.sessionKey)
-            // History retention must never cancel a delivery that has not yet
-            // been accepted. Explicit user clears still remove outbox entries.
-            removeNotifications(for: snapshot)
+            // Session timestamps can predate actual notification delivery.
+            // Automatic history cleanup must not erase a newly delivered
+            // Notification Center item. Explicit user clears still remove it.
         }
         guard removedAny else { return }
         updateLivenessTimer()
@@ -678,6 +682,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let deliveries = nativeNotificationOutbox.dueDeliveries()
         guard !deliveries.isEmpty else { return }
         isDrainingNativeNotificationOutbox = true
+        displayCaptureMonitor.refresh { [weak self] isCaptureActive in
+            guard let self else { return }
+            guard !isCaptureActive else {
+                self.deferNativeNotificationsForDisplayCapture(deliveries)
+                return
+            }
+            self.loadNativeNotificationSettings(for: deliveries)
+        }
+    }
+
+    private func loadNativeNotificationSettings(
+        for deliveries: [NativeNotificationDelivery]
+    ) {
         UNUserNotificationCenter.current().getNotificationSettings {
             [weak self] settings in
             let authorizationStatus = settings.authorizationStatus
@@ -699,6 +716,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     hadPersistenceFailure: false
                 )
             }
+        }
+    }
+
+    private func deferNativeNotificationsForDisplayCapture(
+        _ deliveries: [NativeNotificationDelivery]
+    ) {
+        isDrainingNativeNotificationOutbox = false
+        let shouldSoundFallback = deliveries.contains { delivery in
+            captureFallbackSoundedDeliveryIDs.insert(delivery.id).inserted
+        }
+        if shouldSoundFallback {
+            NSSound.beep()
+        }
+        dashboard.setBusy(
+            false,
+            message: "macOS hides banners while the display is shared. Turnring kept the alert queued and will show it when sharing ends."
+        )
+        scheduleNativeCaptureRetry()
+    }
+
+    private func scheduleNativeCaptureRetry() {
+        guard nativeCaptureRetryTask == nil else { return }
+        nativeCaptureRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.nativeCaptureRetryTask = nil
+            self.drainNativeNotificationOutbox()
         }
     }
 
@@ -761,16 +805,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                             message: "macOS rejected a notification. Turnring kept it queued and will retry: \(error.localizedDescription)"
                         )
                     } else {
-                        try self.nativeNotificationOutbox.markSucceeded(
-                            id: delivery.id
+                        self.confirmNativeNotificationDelivery(
+                            delivery,
+                            deliveries: deliveries,
+                            nextIndex: index + 1,
+                            hadPersistenceFailure: hadPersistenceFailure
                         )
-                        if delivery.isTest {
-                            self.dashboard.setBusy(
-                                false,
-                                message: "Test alert accepted by macOS. If no banner appears, review Turnring's notification health warning.",
-                                autoHideAfter: 5
-                            )
-                        }
+                        return
                     }
                 } catch {
                     nextHadPersistenceFailure = true
@@ -786,6 +827,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 )
             }
         }
+    }
+
+    private func confirmNativeNotificationDelivery(
+        _ delivery: NativeNotificationDelivery,
+        remainingChecks: Int = 5,
+        deliveries: [NativeNotificationDelivery],
+        nextIndex: Int,
+        hadPersistenceFailure: Bool
+    ) {
+        UNUserNotificationCenter.current().getDeliveredNotifications {
+            [weak self] delivered in
+            let isPresent = delivered.contains {
+                $0.request.identifier == delivery.id
+            }
+            Task { @MainActor in
+                guard let self else { return }
+                if !isPresent, remainingChecks > 1 {
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 250_000_000)
+                        guard !Task.isCancelled, let self else { return }
+                        self.confirmNativeNotificationDelivery(
+                            delivery,
+                            remainingChecks: remainingChecks - 1,
+                            deliveries: deliveries,
+                            nextIndex: nextIndex,
+                            hadPersistenceFailure: hadPersistenceFailure
+                        )
+                    }
+                    return
+                }
+                self.displayCaptureMonitor.refresh {
+                    [weak self] isCaptureActive in
+                    self?.finishNativeNotificationConfirmation(
+                        delivery,
+                        isPresent: isPresent,
+                        isCaptureActive: isCaptureActive,
+                        deliveries: deliveries,
+                        nextIndex: nextIndex,
+                        hadPersistenceFailure: hadPersistenceFailure
+                    )
+                }
+            }
+        }
+    }
+
+    private func finishNativeNotificationConfirmation(
+        _ delivery: NativeNotificationDelivery,
+        isPresent: Bool,
+        isCaptureActive: Bool,
+        deliveries: [NativeNotificationDelivery],
+        nextIndex: Int,
+        hadPersistenceFailure: Bool
+    ) {
+        var nextHadPersistenceFailure = hadPersistenceFailure
+        do {
+            switch NativeNotificationDeliveryPolicy.disposition(
+                isPresentInNotificationCenter: isPresent,
+                isDisplayCaptureActive: isCaptureActive
+            ) {
+            case .acknowledge:
+                try nativeNotificationOutbox.markSucceeded(id: delivery.id)
+                captureFallbackSoundedDeliveryIDs.remove(delivery.id)
+                if delivery.isTest {
+                    dashboard.setBusy(
+                        false,
+                        message: "Test alert delivered to Notification Center.",
+                        autoHideAfter: 5
+                    )
+                }
+            case .retry:
+                try nativeNotificationOutbox.markFailed(id: delivery.id)
+                if isCaptureActive {
+                    deferNativeNotificationsForDisplayCapture([delivery])
+                    return
+                } else {
+                    dashboard.setBusy(
+                        false,
+                        message: "macOS accepted an alert but did not retain it in Notification Center. Turnring kept it queued and will retry."
+                    )
+                }
+            }
+        } catch {
+            nextHadPersistenceFailure = true
+            dashboard.setBusy(
+                false,
+                message: "Turnring could not update its saved notification queue. It retained the alert for recovery."
+            )
+        }
+        submitNativeNotifications(
+            deliveries,
+            at: nextIndex,
+            hadPersistenceFailure: nextHadPersistenceFailure
+        )
     }
 
     private func alertBody(for session: SessionSummary) -> String? {

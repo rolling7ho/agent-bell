@@ -48,4 +48,4 @@ authoritative measurement for your Mac.
 
 Turnring is available under the [Apache License 2.0](LICENSE).
 
-Lines of Code: 17,308
+Lines of Code: 17,565

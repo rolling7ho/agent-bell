@@ -5,6 +5,22 @@ public enum NativeNotificationOutboxError: Error, Equatable {
     case unavailable
 }
 
+public enum NativeNotificationDeliveryDisposition: Equatable, Sendable {
+    case acknowledge
+    case retry
+}
+
+public enum NativeNotificationDeliveryPolicy {
+    public static func disposition(
+        isPresentInNotificationCenter: Bool,
+        isDisplayCaptureActive: Bool
+    ) -> NativeNotificationDeliveryDisposition {
+        isPresentInNotificationCenter && !isDisplayCaptureActive
+            ? .acknowledge
+            : .retry
+    }
+}
+
 public struct NativeNotificationDelivery: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var title: String

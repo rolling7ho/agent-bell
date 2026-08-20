@@ -2,7 +2,7 @@ import XCTest
 @testable import TurnringCore
 
 final class NativeNotificationOutboxTests: XCTestCase {
-    func testPersistsPrivateDeliveryUntilMacOSAcceptsIt() throws {
+    func testPersistsPrivateDeliveryUntilNotificationCenterConfirmsIt() throws {
         let directory = temporaryDirectory()
         let stateURL = directory.appendingPathComponent("native-outbox.json")
         var outbox: NativeNotificationOutbox? = NativeNotificationOutbox(
@@ -23,6 +23,36 @@ final class NativeNotificationOutboxTests: XCTestCase {
         XCTAssertTrue(
             NativeNotificationOutbox(stateURL: stateURL)
                 .allDeliveries().isEmpty
+        )
+    }
+
+    func testDeliveryPolicyRetriesAcceptedButUnretainedNotifications() {
+        XCTAssertEqual(
+            NativeNotificationDeliveryPolicy.disposition(
+                isPresentInNotificationCenter: false,
+                isDisplayCaptureActive: false
+            ),
+            .retry
+        )
+    }
+
+    func testDeliveryPolicyRetriesNotificationsMutedDuringDisplayCapture() {
+        XCTAssertEqual(
+            NativeNotificationDeliveryPolicy.disposition(
+                isPresentInNotificationCenter: true,
+                isDisplayCaptureActive: true
+            ),
+            .retry
+        )
+    }
+
+    func testDeliveryPolicyAcknowledgesConfirmedUnsuppressedNotification() {
+        XCTAssertEqual(
+            NativeNotificationDeliveryPolicy.disposition(
+                isPresentInNotificationCenter: true,
+                isDisplayCaptureActive: false
+            ),
+            .acknowledge
         )
     }
 
