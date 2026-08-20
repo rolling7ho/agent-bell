@@ -10,7 +10,9 @@ app_bundle="${build_directory}/Turnring.app"
 vsix_path="${build_directory}/turnring-focus.vsix"
 vsix_staging_directory="${build_directory}/VSIXStaging"
 notary_archive="${build_directory}/Turnring-notary.zip"
-icon_source_png="${project_directory}/Resources/AppIcon.png"
+icon_source_svg="${project_directory}/Resources/Brand/TurnringMark.svg"
+rendered_icon_png="${build_directory}/TurnringAppIcon.png"
+svg_renderer="${build_directory}/render-svg"
 iconset_directory="${build_directory}/AppIcon.iconset"
 
 if [[ "${configuration}" != "debug" && "${configuration}" != "release" ]]; then
@@ -96,7 +98,7 @@ if [[ -n "${unsafe_writable_input}" ]]; then
   exit 1
 fi
 
-swift_compiler=$(/usr/bin/xcrun --find swift)
+swift_compiler=$(/usr/bin/xcrun --find swiftc)
 if [[ "${swift_compiler}" != /Applications/Xcode.app/* \
       && "${swift_compiler}" != /Library/Developer/CommandLineTools/* ]]; then
   echo "Swift compiler must come from the selected Apple developer tools." >&2
@@ -174,19 +176,24 @@ fi
 
 /bin/rm -rf "${iconset_directory}"
 /bin/mkdir -p "${iconset_directory}"
+/usr/bin/xcrun swiftc \
+  "${project_directory}/Scripts/render-svg.swift" \
+  -framework AppKit \
+  -o "${svg_renderer}"
+"${svg_renderer}" "${icon_source_svg}" "${rendered_icon_png}" 1024
 for size in 16 32 128 256 512; do
-  /usr/bin/sips -z "${size}" "${size}" "${icon_source_png}" \
+  /usr/bin/sips -z "${size}" "${size}" "${rendered_icon_png}" \
     --out "${iconset_directory}/icon_${size}x${size}.png" >/dev/null
 done
 for size in 16 32 128 256 512; do
   doubled_size=$((size * 2))
-  /usr/bin/sips -z "${doubled_size}" "${doubled_size}" "${icon_source_png}" \
+  /usr/bin/sips -z "${doubled_size}" "${doubled_size}" "${rendered_icon_png}" \
     --out "${iconset_directory}/icon_${size}x${size}@2x.png" >/dev/null
 done
 /usr/bin/iconutil -c icns "${iconset_directory}" \
   -o "${app_bundle}/Contents/Resources/AppIcon.icns"
 /bin/cp \
-  "${icon_source_png}" \
+  "${rendered_icon_png}" \
   "${app_bundle}/Contents/Resources/AppIcon.png"
 /bin/cp \
   "${project_directory}/Resources/Brand/"*.svg \

@@ -47,10 +47,11 @@ The current release is 1.3.0 RC (build 30). Turnring intentionally has no
 network-based automatic updater; releases are replaced as app bundles so the
 runtime remains dependency-free and offline.
 
-The ImageGen-created minimalist icon lives at `Resources/AppIcon.png`. The
-build script converts it into the native multi-resolution `AppIcon.icns`
-bundled with the application. Dashboard provider icons are bundled vector
-SVGs. The Codex mark is sourced from the current Codex vector listing on
+The product icon uses the same flat interlocking-ring SVG as the menu bar,
+with a silver ring and a single blue accent. The canonical source lives at
+`Resources/Brand/TurnringMark.svg`; the build script rasterizes it into the
+native multi-resolution `AppIcon.icns` bundled with the application. Dashboard
+provider icons are bundled vector SVGs. The Codex mark is sourced from the current Codex vector listing on
 DBLogo and remains an OpenAI trademark. The Claude symbol is the CC0 vector
 published on Wikimedia Commons from Anthropic's mark.
 
