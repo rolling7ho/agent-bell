@@ -352,7 +352,7 @@ private final class SettingsViewController: NSViewController {
         ntfyTopicField.maskedStringValue = maskedTopic
         ntfyTopicField.toolTip = secureTopic.isEmpty
             ? nil
-            : "Stored in Keychain. Reveal is limited to 60 seconds and protected from capture when macOS allows it."
+            : "Stored in Keychain. Reveal lasts at most 60 seconds and masks sooner when Turnring detects a screenshot or supported recorder. Detection is best effort."
 
         let copyButton = SettingsActionButton(title: "Copy Topic") { [weak self] in
             self?.copyNtfyTopic()

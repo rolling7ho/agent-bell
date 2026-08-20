@@ -29,7 +29,7 @@ struct HookConfigurationEditor {
             let handler: [String: Any] = [
                 "type": "command",
                 "command": hookCommand(provider: provider),
-                "timeout": 2,
+                "timeout": 10,
                 "statusMessage": "Updating Turnring",
                 "turnringOwner": "com.turnring.app",
             ]

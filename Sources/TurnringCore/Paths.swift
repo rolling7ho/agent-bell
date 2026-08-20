@@ -36,6 +36,12 @@ public enum TurnringPaths {
         applicationSupportDirectory.appendingPathComponent("ntfy-outbox.json")
     }
 
+    public static var nativeNotificationOutboxFile: URL {
+        applicationSupportDirectory.appendingPathComponent(
+            "native-notification-outbox.json"
+        )
+    }
+
     public static var focusRequestsDirectory: URL {
         applicationSupportDirectory.appendingPathComponent("focus-requests", isDirectory: true)
     }

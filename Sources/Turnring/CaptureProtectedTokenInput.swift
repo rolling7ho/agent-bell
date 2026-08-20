@@ -6,8 +6,8 @@ final class CaptureProtectedSecretField: NSView {
     private let maskedField = NSTextField(labelWithString: "")
     private let revealedField = NSTextField(labelWithString: "")
     private let revealButton = LiquidGlassButton(title: "")
-    private var previousSharingType: NSWindow.SharingType?
     private var revealTask: Task<Void, Never>?
+    nonisolated(unsafe) private var localKeyMonitor: Any?
     private var secretValue = ""
     private var maskedValue = ""
 
@@ -44,6 +44,9 @@ final class CaptureProtectedSecretField: NSView {
         revealTask?.cancel()
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        if let localKeyMonitor {
+            NSEvent.removeMonitor(localKeyMonitor)
+        }
     }
 
     func obscure() {
@@ -54,10 +57,6 @@ final class CaptureProtectedSecretField: NSView {
         maskedField.isHidden = false
         revealButton.image = eyeImage(named: "eye")
         revealButton.toolTip = "Reveal topic for 60 seconds"
-        if let previousSharingType {
-            window?.sharingType = previousSharingType
-        }
-        previousSharingType = nil
     }
 
     private func configure() {
@@ -114,14 +113,20 @@ final class CaptureProtectedSecretField: NSView {
         )
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
-            selector: #selector(captureApplicationLaunched(_:)),
+            selector: #selector(captureApplicationChanged(_:)),
             name: NSWorkspace.didLaunchApplicationNotification,
             object: nil
         )
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
-            selector: #selector(captureApplicationLaunched(_:)),
+            selector: #selector(captureApplicationChanged(_:)),
             name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(captureApplicationChanged(_:)),
+            name: NSWorkspace.didTerminateApplicationNotification,
             object: nil
         )
         center.addObserver(
@@ -136,6 +141,18 @@ final class CaptureProtectedSecretField: NSView {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: .keyDown
+        ) { [weak self] event in
+            if SecureRevealPolicy.isScreenshotShortcut(
+                command: event.modifierFlags.contains(.command),
+                shift: event.modifierFlags.contains(.shift),
+                keyCode: event.keyCode
+            ) {
+                self?.obscure()
+            }
+            return event
+        }
         updateRevealAvailability()
     }
 
@@ -151,20 +168,34 @@ final class CaptureProtectedSecretField: NSView {
             obscure()
             return
         }
-        guard !secretValue.isEmpty else { return }
+        guard !secretValue.isEmpty,
+              !knownCaptureApplicationIsRunning()
+        else {
+            NSSound.beep()
+            updateRevealAvailability()
+            return
+        }
         revealedField.stringValue = secretValue
         maskedField.isHidden = true
         revealedField.isHidden = false
         revealButton.image = eyeImage(named: "eye.slash")
         revealButton.toolTip = "Hide topic"
-        previousSharingType = window?.sharingType
-        window?.sharingType = .none
         revealTask?.cancel()
         revealTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(
-                nanoseconds: SecureRevealPolicy.maximumDurationNanoseconds
-            )
-            guard !Task.isCancelled else { return }
+            let pollingInterval: UInt64 = 250_000_000
+            var elapsed: UInt64 = 0
+            while elapsed < SecureRevealPolicy.maximumDurationNanoseconds {
+                try? await Task.sleep(nanoseconds: pollingInterval)
+                guard !Task.isCancelled, let self else { return }
+                elapsed += pollingInterval
+                if self.knownCaptureApplicationIsRunning()
+                    || !NSApplication.shared.isActive
+                    || self.window?.isKeyWindow != true
+                {
+                    self.obscure()
+                    return
+                }
+            }
             self?.obscure()
         }
     }
@@ -173,24 +204,35 @@ final class CaptureProtectedSecretField: NSView {
         obscure()
     }
 
-    @objc private func captureApplicationLaunched(_ notification: Notification) {
+    @objc private func captureApplicationChanged(_ notification: Notification) {
         guard let application = notification.userInfo?[
             NSWorkspace.applicationUserInfoKey
         ] as? NSRunningApplication,
             let identifier = application.bundleIdentifier
         else {
+            updateRevealAvailability()
             return
         }
-        if identifier == "com.apple.screencaptureui"
-            || identifier == "com.apple.QuickTimePlayerX"
-            || identifier == "com.obsproject.obs-studio"
-        {
+        if SecureRevealPolicy.isKnownCaptureBundleIdentifier(identifier) {
             obscure()
         }
+        updateRevealAvailability()
     }
 
     private func updateRevealAvailability() {
-        revealButton.isEnabled = !secretValue.isEmpty
+        let captureRisk = knownCaptureApplicationIsRunning()
+        revealButton.isEnabled = !secretValue.isEmpty && !captureRisk
+        revealButton.toolTip = captureRisk
+            ? "Close active screen-capture software to reveal the topic"
+            : isRevealed ? "Hide topic" : "Reveal topic for 60 seconds"
+    }
+
+    private func knownCaptureApplicationIsRunning() -> Bool {
+        NSWorkspace.shared.runningApplications.contains {
+            SecureRevealPolicy.isKnownCaptureBundleIdentifier(
+                $0.bundleIdentifier
+            )
+        }
     }
 
     private func eyeImage(named name: String) -> NSImage? {

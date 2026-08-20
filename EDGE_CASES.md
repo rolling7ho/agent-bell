@@ -64,27 +64,27 @@ whether an ntfy phone subscription exists.
 
 | Edge case | Behavior | Evidence |
 |---|---|---|
-| Notification permission or banner presentation is disabled | Dashboard/history still works and the menu reports the exact System Settings route. No repeated crash or blocking prompt occurs. | Authorization and alert-setting inspection |
-| Focus mode, notification summary, or macOS suppresses a banner | The alert is still submitted to Notification Center and retained in the dashboard; Turnring cannot override system policy. | Foreground presentation and Test Alert path |
+| Notification permission or banner presentation is disabled | Dashboard/history still works, the menu reports the exact System Settings route, and the durable native delivery remains queued instead of being acknowledged. | Authorization and alert-setting inspection; native outbox tests |
+| Focus mode, notification summary, or macOS suppresses a banner | Developer ID builds request Time Sensitive delivery and report when it is disabled. Local/free builds use active priority because macOS rejects restricted entitlements on ad-hoc signatures. The event remains in the dashboard either way. | Distribution-mode entitlement verification; foreground presentation; Test Alert path |
 | The Mac is locked when an alert arrives | Native title and body are generic even if local details were enabled. If lock state cannot be determined, Turnring fails closed to generic content. | Lock-state delivery policy |
 | CoreGraphics does not expose the current session dictionary | Turnring reads the native `IOConsoleLocked` registry property as a fallback, so an unlocked Mac is not permanently mistaken for a locked one. If neither native source is available, details still fail closed. | Screen lock monitor fallback |
 | A detailed alert was delivered before the Mac locked | Turnring removes delivered and pending detailed alerts when it observes the lock. macOS “Show previews: When Unlocked” remains the recommended system-level defense. | Lock observer and detail marker |
 | Notification metadata is inspected | Only an opaque route hash and a detail-presence boolean are stored; raw session and provider identifiers are absent. | Opaque notification routing |
 | Turnring is frontmost | Delegate explicitly requests banner, list, and sound presentation. | `willPresent` implementation |
-| A terminal event is followed immediately by another update | The accepted terminal snapshot is submitted without asynchronous title polling, so the later update cannot cancel its banner. Stable event identifiers still prevent exact replay duplicates. | Immediate delivery and dedupe paths |
+| A terminal event is followed immediately by another update | The terminal delivery intent is persisted before the input record is acknowledged, so a later update cannot cancel its banner. Stable event identifiers still prevent exact replay duplicates. | Durable native outbox and dedupe tests |
 | Phone alerts are disabled | Outbox is cleared and no ntfy network request is made. | Preference reconciliation |
 | Offline, DNS, TLS, HTTP 429, or 5xx failure | Alert remains in a private durable outbox and retries with bounded backoff. | Outbox and response validation tests |
-| A phone delivery keeps failing | It is discarded after eight attempts or 24 hours instead of retrying forever. | Bounded retry and expiry tests |
+| A phone delivery keeps failing | It remains queued and retries with capped exponential backoff until accepted or the user disables that delivery surface. | Durable retry tests |
 | App quits or crashes during phone send | Unacknowledged delivery remains queued for the next launch. | Persist-before-send design and restart tests |
 | Server accepted a request but response was lost | Stable opaque `sequence_id` makes the retry update one phone notification. | Sequence/request tests; ntfy publish API |
-| Many phone failures accumulate | Outbox is capped at 200 newest deliveries and remains bounded on disk. | Outbox bound test |
-| Corrupt, duplicate, malicious, or oversized outbox state | It is bounded, validated, deduplicated, or quarantined without a startup crash. | Outbox corruption tests |
+| Many phone failures accumulate | At 200 deliveries the outbox applies backpressure to the input queue instead of deleting an older unsent alert. | Outbox capacity test |
+| Corrupt, duplicate, malicious, or oversized outbox state | New acknowledgements fail closed while the original state remains available for repair; duplicate IDs remain idempotent. | Outbox corruption and replay tests |
 | Phone has no matching subscription | Connect Phone presents the private topic as an explicit HTTPS QR setup link. ntfy may still accept a publish without a subscriber, so Test Phone Alert asks the user to confirm actual receipt instead of claiming the device is connected. | Device setup-link tests and Settings test flow |
 | Fresh install needs a topic | First launch generates 256 CSPRNG bits locally and stores the resulting topic device-only in Keychain without contacting ntfy. | Secure-topic generation tests |
 | Generated topic may already exist remotely | Turnring does not perform a privacy-leaking, non-atomic availability probe. With 256 random bits, accidental collision is negligible; authenticated server ACLs are required for an enforceable reservation. | Secure-topic design |
 | Upgrade has a valid topic in UserDefaults | It is migrated into Keychain and removed from defaults without changing the phone subscription. | Migration path |
 | Private topic is guessed or shared | The topic is not logged, placed in arguments/hooks, or persisted in the retry outbox. It appears in a URL only in the user-invoked Connect Phone QR flow. Hosted ntfy remains a third party; Turnring's uninstall flow deletes it. | Topic generation, setup-link, and outbox serialization tests |
-| Topic is visible or copied during setup | Settings masks all but the final identifier characters. The eye reveals it for at most 60 seconds and capture detection masks it sooner. Copy Topic is explicit, and Turnring clears its clipboard value after 60 seconds if it is still unchanged. | Secure reveal policy and Phone settings flow |
+| Topic is visible or copied during setup | Settings masks all but the final identifier characters. The eye reveals it for at most 60 seconds and masks sooner on focus loss, an in-app screenshot shortcut, or a known capture app. Copy Topic is explicit, and Turnring clears its clipboard value after 60 seconds if it is still unchanged. Capture detection is best effort because macOS has no universal pre-capture callback. | Secure reveal policy and Phone settings flow |
 | A protected ntfy topic needs authentication | The optional access token is stored device-only in Keychain, loaded only for publishing, and sent exclusively as a Bearer header. It is never placed in the outbox, URL, defaults, hooks, arguments, or logs. | Authorization request and unsafe-token tests |
 | Keychain or secure randomness is unavailable | Turnring creates no weak fallback topic; phone publishing fails with a generic error while local notifications and hooks continue normally. | Fail-closed topic path |
 | Privacy details are off | Phone receives only app surface and generic state. | Phone message builder |
@@ -105,7 +105,7 @@ whether an ntfy phone subscription exists.
 | Short-lived process emits only SessionStart and SessionEnd | The lifecycle record remains safe internally but does not create a blank dashboard card. | Lifecycle-only presentation test |
 | Clear All includes history beyond visible rows | All captured snapshots are cleared, while changed snapshots survive. | Dashboard snapshot design |
 | A card is swiped right | Move Down changes its dashboard order by one position without changing its state or timestamps. New task cards still appear above the manually ordered rows. | Dashboard ordering implementation |
-| A terminal or synthetic test row reaches its retention limit | It is removed from history and its matching delivered notification/outbox record is removed. The default is 5 minutes. | History-retention policy tests |
+| A terminal or synthetic test row reaches its retention limit | It is removed from history and its matching already-delivered system notification is removed. Any unsent native or phone delivery remains queued until accepted. The default is 5 minutes. | History-retention policy and durable outbox behavior |
 | A time setting contains a decimal such as 2.5 minutes | Locale-aware decimal parsing preserves the value, clamps it to the setting's safe range, and stores it as a floating-point duration. Character-count settings remain integers. | Numeric settings implementation |
 | Reset All Settings is pressed accidentally | A confirmation is required. Reset keeps hooks and history, clears the phone token/outbox, rotates the private topic, restores defaults, and tells the user to reconnect the phone. | Confirmed reset flow |
 | A working or unresolved Needs attention row is older than the retention limit | Automatic cleanup leaves it intact until it reaches a terminal state or the user clears it. | History-retention policy tests |
@@ -114,7 +114,7 @@ whether an ntfy phone subscription exists.
 | Quit confirmation is enabled | The red Quit button requires explicit confirmation; Cancel leaves the app running. | Confirmation-first flow |
 | Quit confirmation is disabled | The red Quit button terminates immediately as requested by the saved preference. | General preference gate |
 | Repeated phone tests | The previous settings task is cancelled before a new one begins. | Settings task lifecycle |
-| Settings change while outbox has entries | Disabled state/surface/detail deliveries are discarded before retry. | Reconciliation logic |
+| Settings change while outbox has entries | Explicitly disabled states or surfaces are discarded. Turning details off preserves the alert and substitutes its persisted generic fallback. | Reconciliation and privacy-fallback tests |
 | Light/dark appearance changes | Native colors are refreshed rather than frozen as stale layer colors. | Appearance update paths |
 | Corrupt, duplicate, or oversized session state | Valid newest records load; unsafe records are skipped or the file is quarantined. | Session persistence tests |
 | Concurrent hooks or session updates | File locks and in-process locks preserve complete independent records. | Concurrent queue/store tests |

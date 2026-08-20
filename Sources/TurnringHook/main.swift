@@ -43,7 +43,7 @@ private func readLimitedInput() -> Data? {
     }
 }
 
-private func wakeTurnring() {
+private func wakeTurnring(appBundleURL: URL) throws {
     DistributedNotificationCenter.default().post(
         name: TurnringPaths.eventNotificationName,
         object: nil,
@@ -51,10 +51,14 @@ private func wakeTurnring() {
     )
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    process.arguments = ["-gj", "-a", "Turnring"]
+    process.arguments = ["-gj", appBundleURL.path]
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice
-    try? process.run()
+    try process.run()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        throw QueueStoreError.writeFailed
+    }
 }
 
 guard let appBundleURL = enclosingAppBundleURL(),
@@ -63,22 +67,33 @@ else {
     exit(EXIT_FAILURE)
 }
 
-if let provider = providerFromArguments(),
-   let data = readLimitedInput()
-{
+guard let provider = providerFromArguments(),
+      let data = readLimitedInput()
+else {
+    FileHandle.standardError.write(
+        Data("Turnring hook rejected invalid input.\n".utf8)
+    )
+    exit(EXIT_FAILURE)
+}
+
+do {
     let origin = ProcessInspector.captureOrigin(provider: provider)
     let codexApprovalReviewer = provider == .codex
         ? CodexApprovalContextResolver.reviewer(fromHookPayload: data)
         : nil
-    if let event = try? EventNormalizer.normalize(
+    let event = try EventNormalizer.normalize(
         data: data,
         provider: provider,
         origin: origin,
         codexApprovalReviewer: codexApprovalReviewer
-    ) {
-        try? EventQueue.append(event)
-        wakeTurnring()
-    }
+    )
+    try EventQueue.append(event)
+    try wakeTurnring(appBundleURL: appBundleURL)
+} catch {
+    FileHandle.standardError.write(
+        Data("Turnring could not safely queue this agent event.\n".utf8)
+    )
+    exit(EXIT_FAILURE)
 }
 
 exit(EXIT_SUCCESS)

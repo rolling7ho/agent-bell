@@ -23,7 +23,12 @@ public final class SessionStore: @unchecked Sendable {
     public func apply(
         _ event: AgentEvent,
         processedAt: Date = Date()
-    ) -> (summary: SessionSummary, shouldNotify: Bool, didApply: Bool) {
+    ) -> (
+        summary: SessionSummary,
+        shouldNotify: Bool,
+        didApply: Bool,
+        shouldEnsureDelivery: Bool
+    ) {
         lock.lock()
         defer { lock.unlock() }
 
@@ -43,7 +48,7 @@ public final class SessionStore: @unchecked Sendable {
                 sessionsByKey[event.sessionKey] = existing
             }
             saveLocked()
-            return (existing, false, false)
+            return (existing, false, false, event.state.shouldNotify)
         }
 
         var suppressFinishedDuplicate = false
@@ -59,7 +64,7 @@ public final class SessionStore: @unchecked Sendable {
            !SessionTransitionPolicy.shouldApply(event, to: existing)
         {
             saveLocked()
-            return (existing, false, false)
+            return (existing, false, false, false)
         }
 
         let existingSummary = sessionsByKey[event.sessionKey]
@@ -88,7 +93,8 @@ public final class SessionStore: @unchecked Sendable {
         return (
             summary,
             event.state.shouldNotify && !suppressFinishedDuplicate,
-            true
+            true,
+            event.state.shouldNotify && !suppressFinishedDuplicate
         )
     }
 

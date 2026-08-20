@@ -70,11 +70,23 @@ fi
 /usr/bin/codesign --verify --deep --strict --verbose=2 "${app_bundle}"
 app_signature=$(/usr/bin/codesign -dvvv "${app_bundle}" 2>&1)
 hook_signature=$(/usr/bin/codesign -dvvv "${hook_executable}" 2>&1)
+app_entitlements=$(/usr/bin/codesign -d --entitlements - "${app_bundle}" 2>/dev/null)
 
 if [[ "${app_signature}" != *"flags="*"runtime"* \
       || "${hook_signature}" != *"flags="*"runtime"* ]]; then
   echo "Hardened runtime is missing from an executable." >&2
   exit 1
+fi
+if [[ "${distribution_mode}" == "developer-id" ]]; then
+  if [[ "${app_entitlements}" != *"com.apple.developer.usernotifications.time-sensitive"* ]]; then
+    echo "Developer ID release is missing the Time Sensitive Notifications entitlement." >&2
+    exit 1
+  fi
+else
+  if [[ "${app_entitlements}" == *"com.apple.developer.usernotifications.time-sensitive"* ]]; then
+    echo "Ad-hoc release contains restricted entitlements and will not launch." >&2
+    exit 1
+  fi
 fi
 
 vsix_entries=$(/usr/bin/unzip -Z1 "${vsix_path}")

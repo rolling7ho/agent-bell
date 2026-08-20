@@ -12,10 +12,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private let ntfyPublisher = NtfyPublisher()
     private let ntfyAccessTokenStore = NtfyAccessTokenStore()
     private lazy var ntfyOutbox = NtfyOutbox()
+    private lazy var nativeNotificationOutbox = NativeNotificationOutbox()
     private lazy var screenLockMonitor: ScreenLockMonitor = {
         let monitor = ScreenLockMonitor()
         monitor.onLock = { [weak self] in
             self?.removeSensitiveDeliveredNotifications()
+            self?.drainNativeNotificationOutbox()
         }
         return monitor
     }()
@@ -32,9 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var livenessTimer: Timer?
     private var historyCleanupTimer: Timer?
     private var phoneDeliveryTimer: Timer?
+    private var nativeDeliveryTimer: Timer?
     private var livenessTracker = SessionLivenessTracker()
-    private var pendingNotificationKeys = Set<String>()
     private var isDrainingQueue = false
+    private var isDrainingNativeNotificationOutbox = false
     private var isDrainingPhoneOutbox = false
     private var phoneDeliveryTask: Task<Void, Never>?
     private var isUninstalling = false
@@ -44,6 +47,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         claude: false,
         vscode: false
     )
+    private var usesTimeSensitiveNotifications: Bool {
+        Bundle.main.object(
+            forInfoDictionaryKey: "TurnringUsesTimeSensitiveNotifications"
+        ) as? Bool == true
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard BundleIntegrityVerifier.isValidAppBundle(
@@ -131,6 +139,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             userInfo: nil,
             repeats: true
         )
+        nativeDeliveryTimer = Timer.scheduledTimer(
+            timeInterval: 15,
+            target: self,
+            selector: #selector(drainNativeNotificationOutbox),
+            userInfo: nil,
+            repeats: true
+        )
 
         livenessTracker = SessionLivenessTracker(
             sessions: sessionStore.allSessions()
@@ -138,6 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         updateLivenessTimer()
         updateHistoryCleanupTimer()
         reconcilePhoneOutbox()
+        reconcileNativeNotificationOutbox()
         refreshStoredConversationTitlesInBackground()
         drainQueue()
         refreshDashboard()
@@ -152,6 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         livenessTimer?.invalidate()
         historyCleanupTimer?.invalidate()
         phoneDeliveryTimer?.invalidate()
+        nativeDeliveryTimer?.invalidate()
         phoneDeliveryTask?.cancel()
     }
 
@@ -160,12 +177,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         hasVisibleWindows flag: Bool
     ) -> Bool {
         drainQueue()
+        drainNativeNotificationOutbox()
         drainPhoneOutbox()
         return true
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         refreshNotificationDeliveryStatus()
+        drainNativeNotificationOutbox()
     }
 
     private func configureMenuBar() {
@@ -208,6 +227,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 try? ntfyOutbox.discard(
                     id: alertIdentifier(for: snapshot)
                 )
+                try? nativeNotificationOutbox.discard {
+                    $0.routeID == routingIdentifier(for: snapshot)
+                }
                 removeNotifications(for: snapshot)
             }
             updateLivenessTimer()
@@ -226,6 +248,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 try? ntfyOutbox.discard(
                     id: alertIdentifier(for: snapshot)
                 )
+                try? nativeNotificationOutbox.discard {
+                    $0.routeID == routingIdentifier(for: snapshot)
+                }
                 removeNotifications(for: snapshot)
             }
             updateLivenessTimer()
@@ -276,6 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     self.showNotificationSettingsWarning()
                 } else {
                     self.refreshNotificationDeliveryStatus()
+                    self.drainNativeNotificationOutbox()
                 }
             }
         }
@@ -286,15 +312,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().getNotificationSettings {
             [weak self] settings in
             let authorizationStatus = settings.authorizationStatus
-            let alertsAreDisabled = settings.alertSetting == .disabled
+            let alertSetting = settings.alertSetting
+            let alertStyle = settings.alertStyle
+            let soundSetting = settings.soundSetting
+            let timeSensitiveSetting = settings.timeSensitiveSetting
             Task { @MainActor in
                 guard let self else { return }
                 switch authorizationStatus {
                 case .denied:
-                    self.showNotificationSettingsWarning()
-                case .authorized, .provisional, .ephemeral:
-                    if alertsAreDisabled {
-                        self.showNotificationSettingsWarning()
+                    self.showNotificationSettingsWarning(
+                        "Notifications are denied. Turnring is keeping alerts queued until you enable them in System Settings."
+                    )
+                case .provisional, .ephemeral:
+                    self.showNotificationSettingsWarning(
+                        "Notifications are set to quiet delivery. Allow Turnring notifications so completion alerts can show banners and play sounds."
+                    )
+                case .authorized:
+                    if alertSetting != .enabled || alertStyle == .none {
+                        self.showNotificationSettingsWarning(
+                            "Notification style is None. Turnring is keeping alerts queued until Banners or Alerts are enabled."
+                        )
+                    } else if soundSetting != .enabled {
+                        self.showNotificationSettingsWarning(
+                            "Notification sounds are off. Banners can arrive, but Turnring cannot audibly ping you."
+                        )
+                    } else if self.usesTimeSensitiveNotifications,
+                              timeSensitiveSetting != .enabled
+                    {
+                        self.showNotificationSettingsWarning(
+                            "Time Sensitive notifications are off. Focus or Scheduled Summary may delay Turnring alerts."
+                        )
                     }
                 case .notDetermined:
                     self.requestNotificationAuthorization()
@@ -305,10 +352,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    private func showNotificationSettingsWarning() {
+    private func showNotificationSettingsWarning(
+        _ message: String = "macOS banners are off for Turnring. Enable Allow Notifications and Banners in System Settings → Notifications → Turnring."
+    ) {
         dashboard.setBusy(
             false,
-            message: "macOS banners are off for Turnring. Enable Allow Notifications and Banners in System Settings → Notifications → Turnring."
+            message: message
         )
     }
 
@@ -390,12 +439,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     if result.didApply {
                         livenessTracker.track(result.summary)
                     }
-                    if result.shouldNotify {
-                        scheduleAlerts(for: result.summary)
+                    if result.shouldEnsureDelivery {
+                        try enqueueAlerts(for: result.summary)
                     }
                 }
                 try EventQueue.acknowledge(claim)
             }
+            drainNativeNotificationOutbox()
+            drainPhoneOutbox()
         } catch {
             dashboard.setBusy(
                 false,
@@ -427,11 +478,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 let preview = wakeRelated
                     ? "Agent process was no longer running after the Mac woke."
                     : "Agent process exited before completing."
-                if let failed = sessionStore.markUnexpectedExit(
-                    sessionKey: key,
-                    preview: preview
-                ) {
-                    scheduleAlerts(for: failed)
+                let event = AgentEvent(
+                    provider: session.provider,
+                    state: .failed,
+                    hookEventName: "UnexpectedExit",
+                    sessionID: session.sessionID,
+                    turnID: session.turnID,
+                    cwd: session.cwd,
+                    projectName: session.projectName,
+                    timestamp: Date(),
+                    notificationType: "unexpected_exit",
+                    displayTitle: session.displayTitle,
+                    contentPreview: preview,
+                    origin: session.origin
+                )
+                do {
+                    try EventQueue.append(event)
+                    drainQueue()
+                } catch {
+                    livenessTracker.track(session)
+                    dashboard.setBusy(
+                        false,
+                        message: "Turnring could not safely queue an unexpected agent exit. It will retry."
+                    )
                 }
             }
         }
@@ -493,7 +562,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
             removedAny = true
             livenessTracker.remove(snapshot.sessionKey)
-            try? ntfyOutbox.discard(id: alertIdentifier(for: snapshot))
+            // History retention must never cancel a delivery that has not yet
+            // been accepted. Explicit user clears still remove outbox entries.
             removeNotifications(for: snapshot)
         }
         guard removedAny else { return }
@@ -535,46 +605,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return image
     }
 
-    private func scheduleNotification(
+    private func nativeNotificationDelivery(
         for session: SessionSummary,
         isTest: Bool = false
-    ) {
+    ) -> NativeNotificationDelivery? {
         screenLockMonitor.refresh()
+        guard let genericBody = session.genericNotificationBody else {
+            return nil
+        }
         let includesPrivateDetails = !isTest
             && notificationPreferences.localAlertDetailsEnabled
-            && !screenLockMonitor.isLocked
-        let content = UNMutableNotificationContent()
-        content.title = isTest || includesPrivateDetails
+        let preferredTitle = isTest || includesPrivateDetails
             ? session.formattedTitle
             : session.genericNotificationTitle
-        content.subtitle = ""
-        let body = isTest || includesPrivateDetails
+        let preferredBody = isTest || includesPrivateDetails
             ? session.dashboardPreview(
                 includesPrivateDetails: true,
                 maximumCharacters:
                     notificationPreferences.localPreviewCharacterLimit
             )
-            : session.genericNotificationBody
-        guard let body else { return }
-        content.body = body
-        content.sound = .default
-        content.interruptionLevel = .active
-        content.categoryIdentifier = "AGENT_EVENT"
-        content.threadIdentifier = routingIdentifier(for: session)
-        content.userInfo = [
-            "routeID": routingIdentifier(for: session),
-            "containsPrivateDetails": includesPrivateDetails,
-        ]
-
-        let request = UNNotificationRequest(
-            identifier: alertIdentifier(for: session),
-            content: content,
-            trigger: nil
+            : genericBody
+        return NativeNotificationDelivery(
+            id: alertIdentifier(for: session),
+            title: preferredTitle,
+            body: preferredBody,
+            genericTitle: isTest
+                ? session.formattedTitle
+                : session.genericNotificationTitle,
+            genericBody: isTest
+                ? preferredBody
+                : genericBody,
+            threadIdentifier: routingIdentifier(for: session),
+            routeID: routingIdentifier(for: session),
+            containsPrivateDetails: includesPrivateDetails,
+            isTest: isTest,
+            surfaceKey: NotificationSurface(session: session).rawValue,
+            createdAt: Date()
         )
-        addNotificationRequest(request, isTest: isTest)
     }
 
-    private func scheduleAlerts(for session: SessionSummary) {
+    private func enqueueAlerts(for session: SessionSummary) throws {
         guard !isUninstalling else { return }
         let surfaceEnabled = notificationPreferences.shouldDeliverNotification(
             for: session
@@ -582,22 +652,137 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let shouldPublishToPhone = surfaceEnabled
             && notificationPreferences.shouldPublishPhoneAlert(for: session)
         guard surfaceEnabled || shouldPublishToPhone else { return }
-        let notificationKey = alertIdentifier(for: session)
-        guard pendingNotificationKeys.insert(notificationKey).inserted else { return }
-
-        defer { pendingNotificationKeys.remove(notificationKey) }
-        if surfaceEnabled {
-            scheduleNotification(for: session)
+        if surfaceEnabled,
+           let delivery = nativeNotificationDelivery(for: session)
+        {
+            try nativeNotificationOutbox.enqueue(delivery)
         }
         if shouldPublishToPhone {
-            do {
-                try enqueuePhoneAlert(for: session)
-                drainPhoneOutbox()
-            } catch {
-                dashboard.setBusy(
-                    false,
-                    message: "Phone alert could not be queued: \(error.localizedDescription)",
-                    autoHideAfter: 5
+            try enqueuePhoneAlert(for: session)
+        }
+    }
+
+    @objc private func drainNativeNotificationOutbox() {
+        guard !isUninstalling,
+              !isDrainingNativeNotificationOutbox
+        else {
+            return
+        }
+        guard nativeNotificationOutbox.isOperational else {
+            dashboard.setBusy(
+                false,
+                message: "Turnring's saved notification queue needs repair. New agent events remain queued and are not being discarded."
+            )
+            return
+        }
+        let deliveries = nativeNotificationOutbox.dueDeliveries()
+        guard !deliveries.isEmpty else { return }
+        isDrainingNativeNotificationOutbox = true
+        UNUserNotificationCenter.current().getNotificationSettings {
+            [weak self] settings in
+            let authorizationStatus = settings.authorizationStatus
+            let alertSetting = settings.alertSetting
+            let alertStyle = settings.alertStyle
+            Task { @MainActor in
+                guard let self else { return }
+                guard authorizationStatus == .authorized,
+                      alertSetting == .enabled,
+                      alertStyle != .none
+                else {
+                    self.isDrainingNativeNotificationOutbox = false
+                    self.refreshNotificationDeliveryStatus()
+                    return
+                }
+                self.submitNativeNotifications(
+                    deliveries,
+                    at: 0,
+                    hadPersistenceFailure: false
+                )
+            }
+        }
+    }
+
+    private func submitNativeNotifications(
+        _ deliveries: [NativeNotificationDelivery],
+        at index: Int,
+        hadPersistenceFailure: Bool
+    ) {
+        guard !isUninstalling else {
+            isDrainingNativeNotificationOutbox = false
+            return
+        }
+        guard index < deliveries.count else {
+            isDrainingNativeNotificationOutbox = false
+            if !hadPersistenceFailure,
+               !nativeNotificationOutbox.dueDeliveries().isEmpty
+            {
+                drainNativeNotificationOutbox()
+            }
+            return
+        }
+        let delivery = deliveries[index]
+        screenLockMonitor.refresh()
+        let includesPrivateDetails = delivery.containsPrivateDetails
+            && notificationPreferences.localAlertDetailsEnabled
+            && !screenLockMonitor.isLocked
+        let content = UNMutableNotificationContent()
+        content.title = includesPrivateDetails
+            ? delivery.title
+            : delivery.genericTitle
+        content.body = includesPrivateDetails
+            ? delivery.body
+            : delivery.genericBody
+        content.sound = .default
+        content.interruptionLevel = usesTimeSensitiveNotifications
+            ? .timeSensitive
+            : .active
+        content.categoryIdentifier = "AGENT_EVENT"
+        content.threadIdentifier = delivery.threadIdentifier
+        content.userInfo = [
+            "routeID": delivery.routeID,
+            "containsPrivateDetails": includesPrivateDetails,
+        ]
+        let request = UNNotificationRequest(
+            identifier: delivery.id,
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { [weak self] error in
+            Task { @MainActor in
+                guard let self else { return }
+                var nextHadPersistenceFailure = hadPersistenceFailure
+                do {
+                    if let error {
+                        try self.nativeNotificationOutbox.markFailed(
+                            id: delivery.id
+                        )
+                        self.dashboard.setBusy(
+                            false,
+                            message: "macOS rejected a notification. Turnring kept it queued and will retry: \(error.localizedDescription)"
+                        )
+                    } else {
+                        try self.nativeNotificationOutbox.markSucceeded(
+                            id: delivery.id
+                        )
+                        if delivery.isTest {
+                            self.dashboard.setBusy(
+                                false,
+                                message: "Test alert accepted by macOS. If no banner appears, review Turnring's notification health warning.",
+                                autoHideAfter: 5
+                            )
+                        }
+                    }
+                } catch {
+                    nextHadPersistenceFailure = true
+                    self.dashboard.setBusy(
+                        false,
+                        message: "Turnring could not update its saved notification queue. It retained the alert for recovery."
+                    )
+                }
+                self.submitNativeNotifications(
+                    deliveries,
+                    at: index + 1,
+                    hadPersistenceFailure: nextHadPersistenceFailure
                 )
             }
         }
@@ -722,11 +907,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ) else {
             return
         }
+        let genericMessage = NtfyMessage(
+            title: "\(session.appDisplayName) • \(session.dashboardStateName)",
+            message: genericPhoneBody(for: session),
+            priority: message.priority,
+            tags: [],
+            sequenceID: identifier
+        )
         try ntfyOutbox.enqueue(
             NtfyDelivery(
                 id: identifier,
                 serverURL: NotificationPreferences.ntfyServerURL,
                 message: message,
+                genericMessage: genericMessage,
                 surfaceKey: NotificationSurface(session: session).rawValue,
                 state: session.state,
                 includesDetails: notificationPreferences.phoneAlertDetailsEnabled,
@@ -740,6 +933,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
               notificationPreferences.phoneAlertsEnabled,
               !isDrainingPhoneOutbox
         else {
+            return
+        }
+        guard ntfyOutbox.isOperational else {
+            dashboard.setBusy(
+                false,
+                message: "Turnring's saved phone-alert queue needs repair. New agent events remain queued and are not being discarded."
+            )
             return
         }
         let deliveries = ntfyOutbox.dueDeliveries()
@@ -771,7 +971,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         topic:
                             try notificationPreferences
                                 .prepareSecureNtfyTopic(),
-                        message: delivery.message,
+                        message: notificationPreferences
+                            .phoneAlertDetailsEnabled
+                            ? delivery.message
+                            : (delivery.genericMessage ?? delivery.message),
                         accessToken: try ntfyAccessTokenStore.loadToken()
                     )
                     guard !Task.isCancelled, !isUninstalling else { break }
@@ -804,11 +1007,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return
         }
         try? ntfyOutbox.discard { [notificationPreferences] delivery in
-            if !notificationPreferences.phoneAlertDetailsEnabled,
-               delivery.includesDetails == true
-            {
-                return true
-            }
             guard notificationPreferences.phoneAlertEnabled(
                 for: delivery.state
             ),
@@ -825,7 +1023,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         drainPhoneOutbox()
     }
 
+    private func reconcileNativeNotificationOutbox() {
+        guard !isUninstalling else { return }
+        do {
+            try nativeNotificationOutbox.discard {
+                [notificationPreferences] delivery in
+                guard let surface = NotificationSurface(
+                    rawValue: delivery.surfaceKey
+                ) else {
+                    return true
+                }
+                return !delivery.isTest
+                    && !notificationPreferences.notificationsEnabled(
+                        for: surface
+                    )
+            }
+        } catch {
+            dashboard.setBusy(
+                false,
+                message: "Turnring could not reconcile its saved notification queue. Alerts were retained."
+            )
+        }
+        drainNativeNotificationOutbox()
+    }
+
     private func deliveryPreferencesChanged() {
+        reconcileNativeNotificationOutbox()
         reconcilePhoneOutbox()
         if !notificationPreferences.localAlertDetailsEnabled {
             removeSensitiveDeliveredNotifications()
@@ -901,7 +1124,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             )
         )
         let result = sessionStore.apply(event)
-        scheduleNotification(for: result.summary, isTest: true)
+        do {
+            if let delivery = nativeNotificationDelivery(
+                for: result.summary,
+                isTest: true
+            ) {
+                try nativeNotificationOutbox.enqueue(delivery)
+                drainNativeNotificationOutbox()
+            }
+        } catch {
+            dashboard.setBusy(
+                false,
+                message: "Test alert could not be saved for delivery: \(error.localizedDescription)"
+            )
+        }
         refreshDashboard(preserveMessage: true)
     }
 
@@ -1054,31 +1290,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    private func addNotificationRequest(
-        _ request: UNNotificationRequest,
-        isTest: Bool = false
-    ) {
-        UNUserNotificationCenter.current().add(request) { [weak self] error in
-            let errorDescription = error?.localizedDescription
-            Task { @MainActor in
-                guard let self else { return }
-                if let errorDescription {
-                    self.dashboard.setBusy(
-                        false,
-                        message: "Notification delivery failed: \(errorDescription)",
-                        autoHideAfter: isTest ? 5 : nil
-                    )
-                } else if isTest {
-                    self.dashboard.setBusy(
-                        false,
-                        message: "Test alert submitted to macOS. If no banner appears, check Focus and System Settings → Notifications → Turnring.",
-                        autoHideAfter: 5
-                    )
-                }
-            }
-        }
-    }
-
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
@@ -1143,11 +1354,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         phoneDeliveryTask = nil
         do {
             try ntfyOutbox.clear()
+            try nativeNotificationOutbox.clear()
             try ntfyAccessTokenStore.deleteToken()
             try notificationPreferences.resetToDefaults()
             _ = try notificationPreferences.prepareSecureNtfyTopic()
             setLaunchAtLogin(true)
             updateHistoryCleanupTimer()
+            reconcileNativeNotificationOutbox()
             reconcilePhoneOutbox()
             removeSensitiveDeliveredNotifications()
             refreshDashboard()
@@ -1200,6 +1413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
                 UNUserNotificationCenter.current().removeAllDeliveredNotifications()
                 try? ntfyOutbox.clear()
+                try? nativeNotificationOutbox.clear()
                 try? ntfyAccessTokenStore.deleteToken()
                 try? notificationPreferences.deleteSecureNtfyTopic()
                 try? FileManager.default.removeItem(at: TurnringPaths.applicationSupportDirectory)

@@ -94,6 +94,49 @@ final class QueueStoreTests: XCTestCase {
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: processingURL.path)
         )
+        let quarantined = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ).filter { $0.lastPathComponent.hasPrefix("events.corrupt-") }
+        XCTAssertEqual(quarantined.count, 1)
+        XCTAssertEqual(
+            try String(contentsOf: quarantined[0], encoding: .utf8),
+            "{malformed}\n{\"partial\":\n"
+        )
+    }
+
+    func testQueueAtCapacityFailsWithoutDeletingExistingEvents() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "TurnringQueueTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let queueURL = directory.appendingPathComponent("events.jsonl")
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let existing = Data(
+            repeating: 0x20,
+            count: EventQueue.maximumQueueBytes
+        )
+        try existing.write(to: queueURL)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        XCTAssertThrowsError(
+            try EventQueue.append(
+                event(sessionID: "overflow", timestamp: 100),
+                to: queueURL
+            )
+        ) { error in
+            XCTAssertEqual(error as? QueueStoreError, .queueFull)
+        }
+        XCTAssertEqual(
+            try Data(contentsOf: queueURL).count,
+            EventQueue.maximumQueueBytes
+        )
     }
 
     func testConcurrentHookWritersProduceCompleteQueueRecords() throws {

@@ -135,7 +135,7 @@ public final class NavigationRouter: @unchecked Sendable {
             return .unavailable("The original app is no longer running.")
         }
 
-        _ = application.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        _ = application.activate(options: [.activateAllWindows])
         focusMatchingWindow(pid: pid, projectName: session.projectName)
         return .focused
     }

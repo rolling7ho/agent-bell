@@ -25,7 +25,9 @@ final class SessionStoreTests: XCTestCase {
         store = nil
 
         let restored = SessionStore(stateURL: stateURL)
-        XCTAssertFalse(restored.apply(event).shouldNotify)
+        let replay = restored.apply(event)
+        XCTAssertFalse(replay.shouldNotify)
+        XCTAssertTrue(replay.shouldEnsureDelivery)
     }
 
     func testDuplicateSuppressionAndClaudeIdleStopCoalescing() throws {
@@ -219,8 +221,8 @@ final class SessionStoreTests: XCTestCase {
             date: Date(timeIntervalSince1970: 142)
         )
         finished.sessionID = "claude-session-rotated"
-        finished.displayTitle = "Implement website"
-        finished.contentPreview = "Implemented and verified the website."
+        finished.displayTitle = "Write release notes"
+        finished.contentPreview = "Wrote and verified the release notes."
         finished.origin.agentProcess = process
 
         let summary = store.apply(finished).summary
@@ -228,11 +230,11 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(summary.formattedElapsedDuration, "42s")
         XCTAssertEqual(
             summary.formattedTitle,
-            "Claude Code CLI • Implement website (42s)"
+            "Claude Code CLI • Write release notes (42s)"
         )
         XCTAssertEqual(
             summary.notificationBody,
-            "Implemented and verified the website."
+            "Wrote and verified the release notes."
         )
     }
 

@@ -14,6 +14,7 @@ icon_source_svg="${project_directory}/Resources/Brand/TurnringMark.svg"
 rendered_icon_png="${build_directory}/TurnringAppIcon.png"
 svg_renderer="${build_directory}/render-svg"
 iconset_directory="${build_directory}/AppIcon.iconset"
+entitlements_path="${project_directory}/Resources/Turnring.entitlements"
 
 if [[ "${configuration}" != "debug" && "${configuration}" != "release" ]]; then
   echo "Configuration must be debug or release." >&2
@@ -167,6 +168,15 @@ fi
 /bin/cp \
   "${project_directory}/Resources/Info.plist" \
   "${app_bundle}/Contents/Info.plist"
+if [[ "${distribution_mode}" == "developer-id" ]]; then
+  /usr/libexec/PlistBuddy \
+    -c "Set :TurnringUsesTimeSensitiveNotifications true" \
+    "${app_bundle}/Contents/Info.plist"
+else
+  /usr/libexec/PlistBuddy \
+    -c "Set :TurnringUsesTimeSensitiveNotifications false" \
+    "${app_bundle}/Contents/Info.plist"
+fi
 /bin/cp \
   "${swift_bin_path}/Turnring" \
   "${app_bundle}/Contents/MacOS/Turnring"
@@ -240,15 +250,34 @@ fi
 /usr/bin/codesign "${codesign_arguments[@]}" \
   --identifier com.turnring.hook \
   "${app_bundle}/Contents/Helpers/TurnringHook"
-/usr/bin/codesign "${codesign_arguments[@]}" \
-  --identifier com.turnring.app \
-  "${app_bundle}"
+if [[ "${distribution_mode}" == "developer-id" ]]; then
+  /usr/bin/codesign "${codesign_arguments[@]}" \
+    --entitlements "${entitlements_path}" \
+    --identifier com.turnring.app \
+    "${app_bundle}"
+else
+  /usr/bin/codesign "${codesign_arguments[@]}" \
+    --identifier com.turnring.app \
+    "${app_bundle}"
+fi
 /usr/bin/codesign --verify --deep --strict --verbose=2 "${app_bundle}"
 
 app_signature=$(/usr/bin/codesign -dvvv "${app_bundle}" 2>&1)
 if [[ "${app_signature}" != *"flags="*"runtime"* ]]; then
   echo "Hardened runtime was not applied to Turnring." >&2
   exit 1
+fi
+app_entitlements=$(/usr/bin/codesign -d --entitlements - "${app_bundle}" 2>/dev/null)
+if [[ "${distribution_mode}" == "developer-id" ]]; then
+  if [[ "${app_entitlements}" != *"com.apple.developer.usernotifications.time-sensitive"* ]]; then
+    echo "Developer ID build is missing the Time Sensitive Notifications entitlement." >&2
+    exit 1
+  fi
+else
+  if [[ "${app_entitlements}" == *"com.apple.developer.usernotifications.time-sensitive"* ]]; then
+    echo "Ad-hoc builds must not contain restricted entitlements." >&2
+    exit 1
+  fi
 fi
 
 if [[ "${distribution_mode}" == "developer-id" ]]; then

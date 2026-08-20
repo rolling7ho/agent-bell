@@ -107,7 +107,7 @@ final class NtfyOutboxTests: XCTestCase {
         XCTAssertEqual(outbox.allDeliveries().first?.attemptCount, 1)
     }
 
-    func testFailedDeliveryIsDiscardedAfterBoundedAttempts() throws {
+    func testFailedDeliveryIsRetainedAfterManyAttempts() throws {
         let outbox = NtfyOutbox(
             stateURL: temporaryDirectory().appendingPathComponent("outbox.json")
         )
@@ -118,28 +118,28 @@ final class NtfyOutboxTests: XCTestCase {
         )
         try outbox.enqueue(delivery)
 
-        for _ in 0..<NtfyOutbox.maximumAttempts {
+        for _ in 0..<100 {
             try outbox.markFailed(id: delivery.id, at: now)
         }
 
-        XCTAssertTrue(outbox.allDeliveries().isEmpty)
+        XCTAssertEqual(outbox.allDeliveries().count, 1)
+        XCTAssertEqual(outbox.allDeliveries().first?.attemptCount, 100)
     }
 
-    func testExpiredDeliveryIsDiscardedInsteadOfRetriedForever() throws {
+    func testOldDeliveryRemainsAvailableForRetry() throws {
         let outbox = NtfyOutbox(
             stateURL: temporaryDirectory().appendingPathComponent("outbox.json")
         )
         let now = Date()
         let delivery = makeDelivery(
             id: "expired-delivery",
-            date: now.addingTimeInterval(
-                -NtfyOutbox.maximumDeliveryAge - 1
-            ).timeIntervalSince1970
+            date: now.addingTimeInterval(-7 * 24 * 60 * 60)
+                .timeIntervalSince1970
         )
         try outbox.enqueue(delivery)
 
-        XCTAssertTrue(outbox.dueDeliveries(at: now).isEmpty)
-        XCTAssertTrue(outbox.allDeliveries().isEmpty)
+        XCTAssertEqual(outbox.dueDeliveries(at: now).first?.id, delivery.id)
+        XCTAssertEqual(outbox.allDeliveries().count, 1)
     }
 
     func testWallClockRollbackCannotStrandQueuedDelivery() throws {
@@ -210,7 +210,7 @@ final class NtfyOutboxTests: XCTestCase {
         XCTAssertEqual(outbox.allDeliveries().first?.message.title, "Newer")
     }
 
-    func testOversizedOutboxIsQuarantinedWithoutLoadingIt() throws {
+    func testOversizedOutboxFailsClosedWithoutDeletingEvidence() throws {
         let directory = temporaryDirectory()
         let stateURL = directory.appendingPathComponent("ntfy-outbox.json")
         try Data(repeating: 0x20, count: 2 * 1_024 * 1_024 + 1)
@@ -219,16 +219,14 @@ final class NtfyOutboxTests: XCTestCase {
         let outbox = NtfyOutbox(stateURL: stateURL)
 
         XCTAssertTrue(outbox.allDeliveries().isEmpty)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: stateURL.path))
-        let files = try FileManager.default.contentsOfDirectory(
-            atPath: directory.path
+        XCTAssertFalse(outbox.isOperational)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stateURL.path))
+        XCTAssertThrowsError(
+            try outbox.enqueue(makeDelivery(id: "new", date: 1_000))
         )
-        XCTAssertTrue(files.contains {
-            $0.hasPrefix("ntfy-outbox.corrupt-")
-        })
     }
 
-    func testCorruptOutboxIsQuarantinedWithoutBreakingStartup() throws {
+    func testCorruptOutboxFailsClosedWithoutDeletingEvidence() throws {
         let directory = temporaryDirectory()
         let stateURL = directory.appendingPathComponent("outbox.json")
         try Data("not-json".utf8).write(to: stateURL)
@@ -236,16 +234,78 @@ final class NtfyOutboxTests: XCTestCase {
         let outbox = NtfyOutbox(stateURL: stateURL)
 
         XCTAssertTrue(outbox.allDeliveries().isEmpty)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: stateURL.path))
-        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
-        XCTAssertTrue(names.contains { $0.hasPrefix("ntfy-outbox.corrupt-") })
+        XCTAssertFalse(outbox.isOperational)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stateURL.path))
+        XCTAssertThrowsError(
+            try outbox.enqueue(makeDelivery(id: "new", date: 1_000))
+        ) { error in
+            XCTAssertEqual(error as? NtfyOutboxError, .unavailable)
+        }
     }
 
-    func testOutboxBoundsQueuedDeliveries() throws {
+    func testValidJSONWithInvalidDeliveryFailsClosed() throws {
+        let stateURL = temporaryDirectory().appendingPathComponent("outbox.json")
+        let outbox = NtfyOutbox(stateURL: stateURL)
+        try outbox.enqueue(makeDelivery(id: "invalid-state", date: 100))
+        var state = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: stateURL))
+                as? [String: Any]
+        )
+        var deliveries = try XCTUnwrap(
+            state["deliveries"] as? [[String: Any]]
+        )
+        deliveries[0]["state"] = AgentState.working.rawValue
+        state["deliveries"] = deliveries
+        try JSONSerialization.data(withJSONObject: state).write(to: stateURL)
+
+        let restored = NtfyOutbox(stateURL: stateURL)
+
+        XCTAssertFalse(restored.isOperational)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stateURL.path))
+        XCTAssertTrue(restored.dueDeliveries(at: Date.distantFuture).isEmpty)
+    }
+
+    func testGenericFallbackSurvivesPersistenceForPrivacyChanges() throws {
+        let stateURL = temporaryDirectory().appendingPathComponent("outbox.json")
+        let detailed = NtfyMessage(
+            title: "Private title",
+            message: "Private body",
+            priority: .default,
+            tags: [],
+            sequenceID: "privacy"
+        )
+        let generic = NtfyMessage(
+            title: "Turnring • Finished",
+            message: "An agent task finished.",
+            priority: .default,
+            tags: [],
+            sequenceID: "privacy"
+        )
+        let outbox = NtfyOutbox(stateURL: stateURL)
+        try outbox.enqueue(
+            NtfyDelivery(
+                id: "privacy",
+                serverURL: "https://ntfy.sh",
+                message: detailed,
+                genericMessage: generic,
+                surfaceKey: "codexCLI",
+                state: .finished,
+                includesDetails: true
+            )
+        )
+
+        XCTAssertEqual(
+            NtfyOutbox(stateURL: stateURL)
+                .allDeliveries().first?.genericMessage,
+            generic
+        )
+    }
+
+    func testFullOutboxAppliesBackpressureWithoutDroppingOldDeliveries() throws {
         let outbox = NtfyOutbox(
             stateURL: temporaryDirectory().appendingPathComponent("outbox.json")
         )
-        for index in 0..<(NtfyOutbox.maximumDeliveries + 10) {
+        for index in 0..<NtfyOutbox.maximumDeliveries {
             try outbox.enqueue(
                 makeDelivery(
                     id: "delivery-\(index)",
@@ -254,15 +314,15 @@ final class NtfyOutboxTests: XCTestCase {
             )
         }
 
-        XCTAssertEqual(
-            outbox.allDeliveries().count,
-            NtfyOutbox.maximumDeliveries
-        )
-        XCTAssertNil(
-            outbox.allDeliveries().first {
-                $0.id == "delivery-0"
-            }
-        )
+        XCTAssertThrowsError(
+            try outbox.enqueue(
+                makeDelivery(id: "overflow", date: 1_000)
+            )
+        ) { error in
+            XCTAssertEqual(error as? NtfyOutboxError, .capacityReached)
+        }
+        XCTAssertEqual(outbox.allDeliveries().count, NtfyOutbox.maximumDeliveries)
+        XCTAssertNotNil(outbox.allDeliveries().first { $0.id == "delivery-0" })
     }
 
     private func makeDelivery(id: String, date: TimeInterval) -> NtfyDelivery {

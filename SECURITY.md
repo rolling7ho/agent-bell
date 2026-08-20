@@ -19,7 +19,13 @@ Turnring therefore uses layered controls:
   helper, which still verifies the complete app signature before processing;
 - device-only Keychain storage for ntfy topics and tokens;
 - 256-bit random ntfy topics, with automatic rotation of weaker legacy values;
-- bounded, validated hook inputs and privacy-preserving notification payloads.
+- bounded, validated hook inputs and privacy-preserving notification payloads;
+- fsynced event and delivery queues that acknowledge work only after durable
+  persistence, apply backpressure at capacity, and retry transient failures;
+- active-priority native alerts in local/free builds, plus Time Sensitive
+  delivery in Developer ID builds where macOS can validate the entitlement;
+- explicit health warnings when banners, sounds, or supported Time Sensitive
+  delivery are disabled.
 
 Notification intent is stored only as a bounded allowlisted identifier such
 as `question`, `plan_approval`, or `permission_request`. Human-facing copy is
@@ -27,6 +33,13 @@ generated locally. Question choices, answers, and plan contents are not
 persisted. When Sensitive Previews is off, the app can identify the required
 decision without displaying the underlying question, command, path, query, or
 URL.
+
+When Sensitive Previews is enabled, its bounded, redacted display text can be
+stored in the user-only session file and native/phone delivery outboxes until
+the corresponding records are delivered or cleared. Those directories use
+mode `0700` and files use mode `0600`. Turning previews off causes queued phone
+alerts to use their persisted generic fallback and native alerts to render
+generic text; it does not delete the ping.
 
 Code signing detects modification but does not hide code, guarantee that code
 is vulnerability-free, or establish trust when the signature is ad hoc.
@@ -40,7 +53,8 @@ is vulnerability-free, or establish trust when the signature is ad hoc.
 ```
 
 This produces a hardened-runtime, ad-hoc-signed app for the current Mac. It
-does not create a distributable DMG.
+uses active-priority notifications because macOS rejects restricted
+entitlements on ad-hoc signatures. It does not create a distributable DMG.
 
 ### Developer ID distribution
 
@@ -57,14 +71,15 @@ TURNRING_NOTARY_PROFILE="turnring-notary" \
 The build fails unless the Developer ID identity and notarization profile are
 available. It signs with hardened runtime and a secure timestamp, notarizes
 and staples the app and DMG, mounts the DMG read-only, and verifies Gatekeeper,
-the signatures, the tickets, the VSIX allowlist, and absence of source/debug
-files.
+the Time Sensitive entitlement, the signatures, the tickets, the VSIX
+allowlist, and absence of source/debug files.
 
 ### Free/ad-hoc distribution
 
 Apple does not issue Developer ID Application certificates or accept
 notarization submissions through a free Apple developer account. The fallback
 mode is therefore clearly identified as not Apple-notarized.
+It uses active-priority notifications so the ad-hoc app remains launchable.
 
 Create a long-lived detached-signing key outside the source tree:
 
@@ -96,9 +111,9 @@ Recipients verify before opening:
 
 ```sh
 /bin/zsh Scripts/verify-download.sh \
-  Turnring-1.3.0-build30-arm64.dmg \
-  Turnring-1.3.0-build30-arm64.dmg.sha256 \
-  Turnring-1.3.0-build30-arm64.dmg.sha256.sig \
+  Turnring-VERSION-BUILD-arm64.dmg \
+  Turnring-VERSION-BUILD-arm64.dmg.sha256 \
+  Turnring-VERSION-BUILD-arm64.dmg.sha256.sig \
   Turnring-release-public.pem
 ```
 
@@ -128,12 +143,13 @@ topic private.
 
 The optional publish token uses secure entry and is not revealable. The random
 ntfy topic is masked by default. Revealing it is limited to 60 seconds, marks
-the containing window as unavailable for macOS window sharing, and masks the
-topic again when the app or window loses focus, display configuration changes,
-or supported capture software launches. This is defense in depth. macOS does
-not provide applications with a universal advance callback for every
-third-party capture path, so system capture exclusion is the primary
-protection while the topic is revealed.
+the topic again when the app or window loses focus, a screenshot shortcut is
+pressed while Turnring is active, or supported capture software launches. The
+reveal action is refused while known capture software is running. This is
+best-effort defense in depth: macOS does not provide applications with a
+universal advance callback for every screenshot or third-party capture path,
+so users should obscure sensitive windows before starting any unrecognized
+capture tool.
 
 ## Persistent hook launcher
 

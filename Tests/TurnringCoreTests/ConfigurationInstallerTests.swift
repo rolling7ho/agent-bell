@@ -400,7 +400,7 @@ final class ConfigurationInstallerTests: XCTestCase {
                     "'\(hookExecutable.path)' --provider "
                         + testCase.provider.rawValue
                 )
-                XCTAssertEqual(handler["timeout"] as? Int, 2)
+                XCTAssertEqual(handler["timeout"] as? Int, 10)
                 XCTAssertEqual(
                     handler["statusMessage"] as? String,
                     "Updating Turnring"

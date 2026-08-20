@@ -1,15 +1,18 @@
 import Darwin
 import Foundation
 
-public enum QueueStoreError: Error {
+public enum QueueStoreError: Error, Equatable {
     case openFailed
     case lockFailed
     case writeFailed
+    case syncFailed
+    case queueFull
+    case corruptRecord
     case claimFailed
 }
 
 public enum EventQueue {
-    private static let maximumQueueBytes = EventNormalizer.maximumPayloadBytes * 64
+    static let maximumQueueBytes = EventNormalizer.maximumPayloadBytes * 64
 
     public static func append(_ event: AgentEvent, to url: URL = TurnringPaths.queueFile) throws {
         try prepareParentDirectory(for: url)
@@ -29,10 +32,13 @@ public enum EventQueue {
         defer { Darwin.close(descriptor) }
 
         var fileStatus = stat()
-        if fstat(descriptor, &fileStatus) == 0,
-           fileStatus.st_size > maximumQueueBytes
-        {
-            _ = ftruncate(descriptor, 0)
+        guard fstat(descriptor, &fileStatus) == 0 else {
+            throw QueueStoreError.writeFailed
+        }
+        guard fileStatus.st_size >= 0,
+              fileStatus.st_size + off_t(data.count) <= maximumQueueBytes
+        else {
+            throw QueueStoreError.queueFull
         }
 
         var bytesWritten = 0
@@ -50,8 +56,22 @@ public enum EventQueue {
             return true
         }
         guard succeeded else { throw QueueStoreError.writeFailed }
-        _ = fsync(descriptor)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        guard fsync(descriptor) == 0 else {
+            throw QueueStoreError.syncFailed
+        }
+        do {
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: url.path
+            )
+        } catch {
+            throw QueueStoreError.writeFailed
+        }
+        do {
+            try DurableFileWriter.syncDirectory(containing: url)
+        } catch {
+            throw QueueStoreError.syncFailed
+        }
     }
 
     public struct Claim: Sendable {
@@ -90,8 +110,7 @@ public enum EventQueue {
         }
         guard fileStatus.st_size > 0 else { return nil }
         guard fileStatus.st_size <= maximumQueueBytes else {
-            _ = ftruncate(descriptor, 0)
-            return nil
+            throw QueueStoreError.queueFull
         }
 
         do {
@@ -105,7 +124,12 @@ public enum EventQueue {
                 S_IRUSR | S_IWUSR
             )
             guard replacement >= 0 else { throw QueueStoreError.claimFailed }
+            guard fsync(replacement) == 0 else {
+                Darwin.close(replacement)
+                throw QueueStoreError.claimFailed
+            }
             Darwin.close(replacement)
+            try DurableFileWriter.syncDirectory(containing: url)
         } catch {
             throw QueueStoreError.claimFailed
         }
@@ -115,6 +139,7 @@ public enum EventQueue {
     public static func acknowledge(_ claim: Claim) throws {
         guard FileManager.default.fileExists(atPath: claim.processingURL.path) else { return }
         try FileManager.default.removeItem(at: claim.processingURL)
+        try DurableFileWriter.syncDirectory(containing: claim.processingURL)
     }
 
     /// Compatibility helper for callers that do not need crash-safe
@@ -134,16 +159,47 @@ public enum EventQueue {
             upToCount: maximumQueueBytes + 1
         ) ?? Data()
         guard data.count <= maximumQueueBytes else {
-            try? FileManager.default.removeItem(at: url)
-            return nil
+            throw QueueStoreError.queueFull
         }
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let events = data
-            .split(separator: 0x0A, omittingEmptySubsequences: true)
-            .compactMap { try? decoder.decode(AgentEvent.self, from: Data($0)) }
+        var events: [AgentEvent] = []
+        var corruptRecords = Data()
+        for record in data.split(
+            separator: 0x0A,
+            omittingEmptySubsequences: true
+        ) {
+            if let event = try? decoder.decode(
+                AgentEvent.self,
+                from: Data(record)
+            ) {
+                events.append(event)
+            } else {
+                corruptRecords.append(contentsOf: record)
+                corruptRecords.append(0x0A)
+            }
+        }
+        if !corruptRecords.isEmpty {
+            try quarantineCorruptRecords(corruptRecords, beside: url)
+        }
         return Claim(events: events, processingURL: url)
+    }
+
+    private static func quarantineCorruptRecords(
+        _ data: Data,
+        beside processingURL: URL
+    ) throws {
+        let quarantineURL = processingURL.deletingLastPathComponent()
+            .appendingPathComponent(
+                "events.corrupt-\(UUID().uuidString).jsonl"
+            )
+        do {
+            try DurableFileWriter.write(data, to: quarantineURL)
+        } catch {
+            try? FileManager.default.removeItem(at: quarantineURL)
+            throw QueueStoreError.corruptRecord
+        }
     }
 
     private static func prepareParentDirectory(for url: URL) throws {

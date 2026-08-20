@@ -5,6 +5,7 @@
 # Local build and packaging outputs
 /outputs/
 /work/
+/.release/
 *.app
 *.dSYM
 *.dmg
