@@ -5,23 +5,23 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>AgentBell</string>
+  <string>Turnring</string>
   <key>CFBundleIdentifier</key>
-  <string>com.agentbell.app</string>
+  <string>com.turnring.app</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon.icns</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>AgentBell</string>
+  <string>Turnring</string>
   <key>CFBundleDisplayName</key>
-  <string>AgentBell</string>
+  <string>Turnring</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
   <string>1.3.0</string>
   <key>CFBundleVersion</key>
-	<string>29</string>
+  <string>30</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSUIElement</key>

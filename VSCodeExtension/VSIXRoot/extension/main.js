@@ -9,7 +9,7 @@ const requestDirectory = path.join(
   os.homedir(),
   "Library",
   "Application Support",
-  "AgentBell",
+  "Turnring",
   "focus-requests"
 );
 
@@ -27,16 +27,16 @@ function isValidSessionID(value) {
 
 function readRequest(requestID) {
   if (!isValidRequestID(requestID)) {
-    throw new Error("Invalid AgentBell request identifier.");
+    throw new Error("Invalid Turnring request identifier.");
   }
 
   const requestPath = path.join(requestDirectory, `${requestID}.json`);
   const details = fs.lstatSync(requestPath);
   if (!details.isFile() || details.uid !== process.getuid() || (details.mode & 0o022) !== 0) {
-    throw new Error("AgentBell rejected an unsafe focus request.");
+    throw new Error("Turnring rejected an unsafe focus request.");
   }
   if (details.size > 64 * 1024) {
-    throw new Error("AgentBell focus request is too large.");
+    throw new Error("Turnring focus request is too large.");
   }
 
   let request;
@@ -46,12 +46,12 @@ function readRequest(requestID) {
     fs.unlinkSync(requestPath);
   }
   if (request.requestID !== requestID) {
-    throw new Error("AgentBell request identifier mismatch.");
+    throw new Error("Turnring request identifier mismatch.");
   }
   const createdAt = Date.parse(request.createdAt);
   const age = Date.now() - createdAt;
   if (!Number.isFinite(createdAt) || age < -60_000 || age > 5 * 60_000) {
-    throw new Error("AgentBell focus request expired.");
+    throw new Error("Turnring focus request expired.");
   }
   return request;
 }
@@ -103,12 +103,12 @@ function validatedResumeOptions(request) {
     shellArgs: provider === "codex"
       ? ["resume", request.sessionID]
       : ["--resume", request.sessionID],
-    name: `AgentBell · ${provider === "codex" ? "Codex" : "Claude"}`
+    name: `Turnring · ${provider === "codex" ? "Codex" : "Claude"}`
   };
 }
 
 async function handleURI(uri) {
-  if (uri.authority !== "agentbell.focus" || uri.path !== "/focus") {
+  if (uri.authority !== "turnring.focus" || uri.path !== "/focus") {
     return;
   }
 
@@ -118,20 +118,20 @@ async function handleURI(uri) {
     if (request.action === "focus") {
       if (!await focusTerminal(request.shellPID)) {
         vscode.window.showWarningMessage(
-          "AgentBell could not identify the original terminal. It did not start a duplicate session."
+          "Turnring could not identify the original terminal. It did not start a duplicate session."
         );
       }
       return;
     }
 
     if (request.action !== "resume") {
-      throw new Error("Unsupported AgentBell action.");
+      throw new Error("Unsupported Turnring action.");
     }
     const terminal = vscode.window.createTerminal(validatedResumeOptions(request));
     terminal.show(false);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown focus error.";
-    vscode.window.showErrorMessage(`AgentBell: ${message}`);
+    vscode.window.showErrorMessage(`Turnring: ${message}`);
   }
 }
 

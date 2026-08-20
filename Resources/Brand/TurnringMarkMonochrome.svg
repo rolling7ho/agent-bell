@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title description">
+  <title id="title">Turnring monochrome mark</title>
+  <desc id="description">Two open interlocking rings representing a turn being handed from one agent to another.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="15">
+    <path d="M76 31A39 39 0 1 0 73 82"/>
+    <path d="M52 97A39 39 0 1 0 55 46"/>
+  </g>
+</svg>

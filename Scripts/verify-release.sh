@@ -23,7 +23,7 @@ fi
 /usr/bin/codesign --verify --strict --verbose=2 "${dmg_path}"
 dmg_signature=$(/usr/bin/codesign -dvvv "${dmg_path}" 2>&1)
 
-mount_directory=$(/usr/bin/mktemp -d "/tmp/agentbell-verify.XXXXXX")
+mount_directory=$(/usr/bin/mktemp -d "/tmp/turnring-verify.XXXXXX")
 mounted=false
 cleanup() {
   if [[ "${mounted}" == "true" ]]; then
@@ -40,10 +40,10 @@ trap cleanup EXIT
   "${dmg_path}" >/dev/null
 mounted=true
 
-app_bundle="${mount_directory}/AgentBell.app"
-main_executable="${app_bundle}/Contents/MacOS/AgentBell"
-hook_executable="${app_bundle}/Contents/Helpers/AgentBellHook"
-vsix_path="${app_bundle}/Contents/Resources/VSCode/agentbell-focus.vsix"
+app_bundle="${mount_directory}/Turnring.app"
+main_executable="${app_bundle}/Contents/MacOS/Turnring"
+hook_executable="${app_bundle}/Contents/Helpers/TurnringHook"
+vsix_path="${app_bundle}/Contents/Resources/VSCode/turnring-focus.vsix"
 
 for required_path in \
   "${app_bundle}" \

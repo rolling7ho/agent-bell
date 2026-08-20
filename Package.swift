@@ -2,34 +2,34 @@
 import PackageDescription
 
 let package = Package(
-    name: "AgentBell",
+    name: "Turnring",
     platforms: [
         .macOS(.v13),
     ],
     products: [
-        .library(name: "AgentBellCore", targets: ["AgentBellCore"]),
-        .executable(name: "AgentBell", targets: ["AgentBell"]),
-        .executable(name: "AgentBellHook", targets: ["AgentBellHook"]),
+        .library(name: "TurnringCore", targets: ["TurnringCore"]),
+        .executable(name: "Turnring", targets: ["Turnring"]),
+        .executable(name: "TurnringHook", targets: ["TurnringHook"]),
     ],
     targets: [
         .target(
-            name: "AgentBellCore",
-            path: "Sources/AgentBellCore"
+            name: "TurnringCore",
+            path: "Sources/TurnringCore"
         ),
         .executableTarget(
-            name: "AgentBell",
-            dependencies: ["AgentBellCore"],
-            path: "Sources/AgentBell"
+            name: "Turnring",
+            dependencies: ["TurnringCore"],
+            path: "Sources/Turnring"
         ),
         .executableTarget(
-            name: "AgentBellHook",
-            dependencies: ["AgentBellCore"],
-            path: "Sources/AgentBellHook"
+            name: "TurnringHook",
+            dependencies: ["TurnringCore"],
+            path: "Sources/TurnringHook"
         ),
         .testTarget(
-            name: "AgentBellCoreTests",
-            dependencies: ["AgentBellCore"],
-            path: "Tests/AgentBellCoreTests"
+            name: "TurnringCoreTests",
+            dependencies: ["TurnringCore"],
+            path: "Tests/TurnringCoreTests"
         ),
     ]
 )

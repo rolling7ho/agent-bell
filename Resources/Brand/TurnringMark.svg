@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title description">
+  <title id="title">Turnring mark</title>
+  <desc id="description">Two open interlocking rings representing a turn being handed from one agent to another.</desc>
+  <defs>
+    <linearGradient id="silver" x1="34" y1="22" x2="82" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.42" stop-color="#D9E0EA"/>
+      <stop offset="1" stop-color="#8995A7"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="50" y1="45" x2="104" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4D8CFF"/>
+      <stop offset="0.55" stop-color="#1968E8"/>
+      <stop offset="1" stop-color="#0A3D9B"/>
+    </linearGradient>
+    <filter id="edge" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#030712" flood-opacity="0.38"/>
+    </filter>
+  </defs>
+  <g fill="none" stroke-linecap="round" stroke-width="15" filter="url(#edge)">
+    <path d="M76 31A39 39 0 1 0 73 82" stroke="url(#silver)"/>
+    <path d="M52 97A39 39 0 1 0 55 46" stroke="url(#blue)"/>
+  </g>
+  <g fill="none" stroke-linecap="round" stroke-width="2.25" opacity="0.55">
+    <path d="M75 26A44 44 0 0 0 25 64" stroke="#FFFFFF"/>
+    <path d="M53 102A44 44 0 0 0 103 64" stroke="#79A7FF"/>
+  </g>
+</svg>

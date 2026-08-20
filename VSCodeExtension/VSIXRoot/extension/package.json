@@ -1,9 +1,9 @@
 {
   "name": "focus",
-  "displayName": "AgentBell Focus",
-  "description": "Focuses or safely resumes the exact local agent session selected in AgentBell.",
+  "displayName": "Turnring Focus",
+  "description": "Focuses or safely resumes the exact local agent session selected in Turnring.",
   "version": "1.1.0",
-  "publisher": "agentbell",
+  "publisher": "turnring",
   "license": "UNLICENSED",
   "engines": {
     "vscode": "^1.80.0"

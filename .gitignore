@@ -11,7 +11,7 @@
 *.vsix
 *.xcarchive
 
-# Local AgentBell runtime data
+# Local Turnring runtime data
 /.remember/
 
 # macOS metadata

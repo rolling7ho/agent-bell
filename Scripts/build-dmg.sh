@@ -4,22 +4,22 @@ umask 077
 
 project_directory="${0:A:h:h}"
 configuration="${1:-release}"
-distribution_mode="${AGENTBELL_DISTRIBUTION_MODE:-local}"
+distribution_mode="${TURNRING_DISTRIBUTION_MODE:-local}"
 build_directory="${project_directory}/.build"
-app_bundle="${build_directory}/AgentBell.app"
+app_bundle="${build_directory}/Turnring.app"
 info_plist="${app_bundle}/Contents/Info.plist"
 output_directory="${project_directory}/outputs"
-release_private_key="${AGENTBELL_RELEASE_PRIVATE_KEY:-}"
+release_private_key="${TURNRING_RELEASE_PRIVATE_KEY:-}"
 
 if [[ "${distribution_mode}" == "local" ]]; then
   echo "DMG creation is a distribution action. Choose one mode:" >&2
-  echo "  AGENTBELL_DISTRIBUTION_MODE=developer-id (Apple-trusted)" >&2
-  echo "  AGENTBELL_DISTRIBUTION_MODE=adhoc (free, not Apple-notarized)" >&2
+  echo "  TURNRING_DISTRIBUTION_MODE=developer-id (Apple-trusted)" >&2
+  echo "  TURNRING_DISTRIBUTION_MODE=adhoc (free, not Apple-notarized)" >&2
   exit 64
 fi
 if [[ "${distribution_mode}" != "developer-id"
       && "${distribution_mode}" != "adhoc" ]]; then
-  echo "AGENTBELL_DISTRIBUTION_MODE must be developer-id or adhoc." >&2
+  echo "TURNRING_DISTRIBUTION_MODE must be developer-id or adhoc." >&2
   exit 64
 fi
 if [[ "${configuration}" != "release" ]]; then
@@ -28,7 +28,7 @@ if [[ "${configuration}" != "release" ]]; then
 fi
 if [[ "${distribution_mode}" == "adhoc"
       && -z "${release_private_key}" ]]; then
-  echo "Free/ad-hoc distribution requires AGENTBELL_RELEASE_PRIVATE_KEY." >&2
+  echo "Free/ad-hoc distribution requires TURNRING_RELEASE_PRIVATE_KEY." >&2
   echo "Create a free detached-signing key with Scripts/create-free-release-key.sh." >&2
   exit 1
 fi
@@ -67,15 +67,15 @@ if [[ "${distribution_mode}" == "adhoc" ]]; then
   signing_identity="-"
 else
   artifact_suffix=""
-  signing_identity="${AGENTBELL_SIGNING_IDENTITY}"
+  signing_identity="${TURNRING_SIGNING_IDENTITY}"
 fi
-output_dmg="${output_directory}/AgentBell-${version}-build${build}-arm64${artifact_suffix}.dmg"
+output_dmg="${output_directory}/Turnring-${version}-build${build}-arm64${artifact_suffix}.dmg"
 checksum_path="${output_dmg}.sha256"
 signature_path="${checksum_path}.sig"
-public_key_path="${output_directory}/AgentBell-release-public.pem"
-public_fingerprint_path="${output_directory}/AgentBell-release-public-key.sha256"
+public_key_path="${output_directory}/Turnring-release-public.pem"
+public_fingerprint_path="${output_directory}/Turnring-release-public-key.sha256"
 staging_directory=$(/usr/bin/mktemp -d \
-  "${build_directory}/AgentBell-dmg.XXXXXX")
+  "${build_directory}/Turnring-dmg.XXXXXX")
 
 cleanup() {
   /bin/rm -rf "${staging_directory}"
@@ -85,7 +85,7 @@ trap cleanup EXIT
 /bin/mkdir -p "${output_directory}" "${staging_directory}/root"
 /usr/bin/ditto \
   "${app_bundle}" \
-  "${staging_directory}/root/AgentBell.app"
+  "${staging_directory}/root/Turnring.app"
 /bin/ln -s /Applications "${staging_directory}/root/Applications"
 if [[ "${distribution_mode}" == "adhoc" ]]; then
   /bin/cp \
@@ -98,7 +98,7 @@ fi
   "${checksum_path}" \
   "${signature_path}"
 /usr/bin/hdiutil create \
-  -volname "AgentBell ${version}" \
+  -volname "Turnring ${version}" \
   -srcfolder "${staging_directory}/root" \
   -fs HFS+ \
   -format UDZO \
@@ -113,7 +113,7 @@ if [[ "${distribution_mode}" == "developer-id" ]]; then
     --timestamp \
     "${output_dmg}"
   /usr/bin/xcrun notarytool submit "${output_dmg}" \
-    --keychain-profile "${AGENTBELL_NOTARY_PROFILE}" \
+    --keychain-profile "${TURNRING_NOTARY_PROFILE}" \
     --wait
   /usr/bin/xcrun stapler staple "${output_dmg}"
   /usr/bin/xcrun stapler validate "${output_dmg}"
@@ -165,7 +165,7 @@ if [[ -n "${release_private_key}" ]]; then
     /usr/bin/shasum -a 256 "${temporary_public_der}" \
       | /usr/bin/awk '{print $1}'
   )
-  print -r -- "${public_fingerprint}  AgentBell-release-public.pem" \
+  print -r -- "${public_fingerprint}  Turnring-release-public.pem" \
     > "${public_fingerprint_path}"
   /bin/chmod 644 "${public_fingerprint_path}"
   /bin/zsh \

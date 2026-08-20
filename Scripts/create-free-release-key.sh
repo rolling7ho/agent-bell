@@ -37,7 +37,7 @@ fi
   -out "${public_key_path}"
 /bin/chmod 644 "${public_key_path}"
 
-public_der=$(/usr/bin/mktemp "/tmp/agentbell-public-key.XXXXXX")
+public_der=$(/usr/bin/mktemp "/tmp/turnring-public-key.XXXXXX")
 trap '/bin/rm -f "${public_der}"' EXIT
 /usr/bin/openssl pkey \
   -pubin \

@@ -4,41 +4,41 @@
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:cre}",
-            "name": "Debug AgentBell",
-            "target": "AgentBell",
+            "cwd": "${workspaceFolder:turnring}",
+            "name": "Debug Turnring",
+            "target": "Turnring",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug AgentBell"
+            "preLaunchTask": "swift: Build Debug Turnring"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:cre}",
-            "name": "Release AgentBell",
-            "target": "AgentBell",
+            "cwd": "${workspaceFolder:turnring}",
+            "name": "Release Turnring",
+            "target": "Turnring",
             "configuration": "release",
-            "preLaunchTask": "swift: Build Release AgentBell"
+            "preLaunchTask": "swift: Build Release Turnring"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:cre}",
-            "name": "Debug AgentBellHook",
-            "target": "AgentBellHook",
+            "cwd": "${workspaceFolder:turnring}",
+            "name": "Debug TurnringHook",
+            "target": "TurnringHook",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug AgentBellHook"
+            "preLaunchTask": "swift: Build Debug TurnringHook"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:cre}",
-            "name": "Release AgentBellHook",
-            "target": "AgentBellHook",
+            "cwd": "${workspaceFolder:turnring}",
+            "name": "Release TurnringHook",
+            "target": "TurnringHook",
             "configuration": "release",
-            "preLaunchTask": "swift: Build Release AgentBellHook"
+            "preLaunchTask": "swift: Build Release TurnringHook"
         }
     ]
 }
