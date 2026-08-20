@@ -13,11 +13,11 @@ sanitized task titles and previews are an explicit opt-in.
 
 ## Download and install
 
-Download the `v1.3.0` release DMG and drag `AgentBell.app` to
+Download the `v1.3.0` release DMG and drag `Turnring.app` to
 `/Applications`. This release is ad-hoc signed with a free development
 identity. It is not signed with Apple Developer ID and is not notarized, so
 macOS may warn that the developer cannot be verified. See
-[macOS says AgentBell can't be opened?](#macos-says-agentbell-cant-be-opened)
+[macOS says Turnring can't be opened?](#macos-says-turnring-cant-be-opened)
 before opening it.
 
 On first launch:
@@ -36,18 +36,18 @@ reports missing hooks; repeating the action is safe.
 Open Settings → **Testing** to send a local test alert. Focus modes and macOS
 notification settings can still suppress a visible banner.
 
-## macOS says AgentBell can't be opened?
+## macOS says Turnring can't be opened?
 
 That warning is expected for this free, non-notarized build. It means macOS
-cannot verify the publisher; it does not mean that AgentBell was Apple-trusted.
+cannot verify the publisher; it does not mean that Turnring was Apple-trusted.
 
 1. In Finder, open `/Applications`.
-2. Control-click `AgentBell.app` and choose **Open**.
+2. Control-click `Turnring.app` and choose **Open**.
 3. Confirm **Open** in the dialog.
 
-If macOS still blocks it, try opening AgentBell once, then go to **System
+If macOS still blocks it, try opening Turnring once, then go to **System
 Settings → Privacy & Security**. Scroll to **Security**, choose **Open Anyway**
-for AgentBell, authenticate, and open it again.
+for Turnring, authenticate, and open it again.
 
 Do not disable Gatekeeper globally or remove quarantine from arbitrary copies.
 If macOS says the app is damaged, or the checksum/signature does not match the
@@ -55,13 +55,13 @@ release assets, delete that copy and download the DMG again.
 
 ## Phone alerts with ntfy
 
-Phone alerts are optional and off by default. AgentBell uses `https://ntfy.sh`;
+Phone alerts are optional and off by default. Turnring uses `https://ntfy.sh`;
 it does not run a server on the Mac.
 
-On the first launch of a new Mac install, AgentBell generates a private topic
+On the first launch of a new Mac install, Turnring generates a private topic
 from 256 bits of cryptographically secure randomness and stores it in that
 Mac's Keychain. The topic is reused on that Mac so setup is one-time. A new
-Mac or a reset of AgentBell settings gets a new topic; downloading the same
+Mac or a reset of Turnring settings gets a new topic; downloading the same
 DMG again on the same Mac does not rotate it.
 
 To connect a phone:
@@ -69,7 +69,7 @@ To connect a phone:
 1. Open Settings → **Phone** and enable phone alerts.
 2. Choose **Connect Phone…** and scan the QR code on the intended phone.
 3. Subscribe to the opened topic in the ntfy app and allow phone notifications.
-4. Return to AgentBell and choose **Test Phone Alert**. Confirm that the
+4. Return to Turnring and choose **Test Phone Alert**. Confirm that the
    notification actually arrives on the phone.
 
 Treat the topic and QR code like a password. On public `ntfy.sh`, an
@@ -82,7 +82,7 @@ the detailed privacy and distribution limits.
 
 ## Privacy
 
-Nothing leaves the Mac while phone alerts are disabled. When enabled, AgentBell
+Nothing leaves the Mac while phone alerts are disabled. When enabled, Turnring
 sends bounded notification data to ntfy over HTTPS and keeps retry state in a
 user-only local directory. Native notification details are also off by default.
 macOS controls notification banners, Focus behavior, login-item approval,
